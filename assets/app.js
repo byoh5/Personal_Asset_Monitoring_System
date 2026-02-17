@@ -2,6 +2,7 @@
   const STORAGE = {
     theme: 'asset_monitoring-theme',
     lastFile: 'asset_monitoring-web-last-file-meta',
+    snapshot: 'asset_monitoring-web-snapshot-v1',
   };
 
   const ASSET_TYPE_LABELS = {
@@ -54,6 +55,8 @@
   };
 
   const CURRENCY_OPTIONS = ['KRW', 'USD', 'EUR', 'JPY', 'CNY', 'HKD'];
+  const MARKET_OPTION_TYPES = ['stock', 'etf', 'crypto', 'fund', 'bond'];
+  const BANK_OPTION_TYPES = ['deposit', 'pension', 'insurance', 'liability'];
 
   const PiePercentLabelPlugin = {
     id: 'piePercentLabel',
@@ -162,6 +165,12 @@
         ticker: '',
         market: '',
         owner: '',
+        quantity: '',
+        manualPrice: '',
+        bankName: '',
+        accountNumber: '',
+        interestRatePct: '',
+        maturityDate: '',
       },
       manualAssetError: '',
     },
@@ -174,6 +183,7 @@
     init() {
       ThemeManager.init();
       this.loadFileMeta();
+      this.loadDataSnapshot();
       this.renderLayout();
       this.bindLayoutEvents();
       this.renderPage('dashboard');
@@ -193,6 +203,60 @@
     saveFileMeta(meta) {
       this.state.fileMeta = meta;
       localStorage.setItem(STORAGE.lastFile, JSON.stringify(meta));
+    },
+
+    loadDataSnapshot() {
+      try {
+        const raw = localStorage.getItem(STORAGE.snapshot);
+        if (!raw) return;
+
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return;
+
+        const assets = Array.isArray(parsed.assets) ? parsed.assets : [];
+        const dashboard = parsed.dashboard && typeof parsed.dashboard === 'object'
+          ? parsed.dashboard
+          : this.buildDashboard(assets, null);
+
+        if (!assets.length && !dashboard) return;
+
+        this.state.assets = assets;
+        this.state.dashboard = dashboard;
+        if (!this.state.fileMeta && parsed.fileMeta && typeof parsed.fileMeta === 'object') {
+          this.state.fileMeta = parsed.fileMeta;
+        }
+
+        const savedAt = this.formatTimestamp(parsed.savedAt);
+        this.state.message = savedAt && savedAt !== '-'
+          ? `최근 작업 데이터를 자동 복원했습니다. (${savedAt})`
+          : '최근 작업 데이터를 자동 복원했습니다.';
+        this.state.messageType = 'info';
+      } catch (error) {
+        console.warn('Failed to load snapshot:', error);
+      }
+    },
+
+    saveDataSnapshot() {
+      try {
+        const payload = {
+          version: 1,
+          savedAt: new Date().toISOString(),
+          assets: this.state.assets || [],
+          dashboard: this.state.dashboard || null,
+          fileMeta: this.state.fileMeta || null,
+        };
+        localStorage.setItem(STORAGE.snapshot, JSON.stringify(payload));
+      } catch (error) {
+        console.warn('Failed to save snapshot:', error);
+      }
+    },
+
+    clearDataSnapshot() {
+      try {
+        localStorage.removeItem(STORAGE.snapshot);
+      } catch (error) {
+        console.warn('Failed to clear snapshot:', error);
+      }
     },
 
     renderLayout() {
@@ -271,6 +335,7 @@
               <div class="card-subtitle">엑셀 파일 로딩 없이도 자산 페이지에서 직접 추가/삭제할 수 있습니다.</div>
               <div class="form-hint" style="margin-top: 8px;">${metaText}</div>
               <div class="form-hint">엑셀을 불러오지 않고 시작한 데이터도 [엑셀 저장]으로 내보낼 수 있습니다.</div>
+              <div class="form-hint">브라우저에 마지막 작업 데이터가 자동 저장되어 재접속 시 복원됩니다. (같은 브라우저/기기 기준)</div>
             </div>
             <div class="file-loader-actions">
               <label for="excelFileInput" class="btn btn-primary">엑셀 파일 선택</label>
@@ -320,6 +385,7 @@
           size: file.size,
           loadedAt: new Date().toISOString(),
         });
+        this.saveDataSnapshot();
 
         this.renderDataToolbar();
         this.renderPage(this.currentPage);
@@ -343,6 +409,7 @@
       this.state.filterType = 'all';
       this.resetJsonImporterState();
       this.resetManualAssetDraft();
+      this.clearDataSnapshot();
       this.renderDataToolbar();
       this.renderPage(this.currentPage);
     },
@@ -356,6 +423,12 @@
         ticker: '',
         market: '',
         owner: '',
+        quantity: '',
+        manualPrice: '',
+        bankName: '',
+        accountNumber: '',
+        interestRatePct: '',
+        maturityDate: '',
       };
     },
 
@@ -531,10 +604,17 @@
     },
 
     renderManualAssetEditor() {
-      const draft = this.state.manualAssetDraft || this.createDefaultManualAssetDraft();
+      const draftRaw = this.state.manualAssetDraft || this.createDefaultManualAssetDraft();
+      const selectedType = this.normalizeAssetType(draftRaw.type || 'other');
+      const draft = {
+        ...this.createDefaultManualAssetDraft(),
+        ...draftRaw,
+        type: selectedType,
+      };
       const errorHtml = this.state.manualAssetError
         ? `<div class="form-error" style="margin-top:8px; margin-bottom:0;">${this.escapeHtml(this.state.manualAssetError)}</div>`
         : '';
+      const typeOptionHint = this.getManualTypeOptionHint(selectedType);
 
       return `
         <form id="manualAssetForm" class="asset-manual-form">
@@ -562,38 +642,118 @@
               </select>
             </div>
             <div>
-              <label class="form-label" for="manualAssetTicker">티커</label>
-              <input id="manualAssetTicker" class="form-input" data-manual-field="ticker" type="text" value="${this.escapeHtml(draft.ticker || '')}" placeholder="예: TSLA" />
-            </div>
-            <div>
-              <label class="form-label" for="manualAssetMarket">시장</label>
-              <input id="manualAssetMarket" class="form-input" data-manual-field="market" type="text" value="${this.escapeHtml(draft.market || '')}" placeholder="예: NASDAQ" />
-            </div>
-            <div>
               <label class="form-label" for="manualAssetOwner">소유자</label>
               <input id="manualAssetOwner" class="form-input" data-manual-field="owner" type="text" value="${this.escapeHtml(draft.owner || '')}" placeholder="예: 본인" />
             </div>
+            ${this.renderManualTypeOptionFields(selectedType, draft)}
           </div>
           <div class="form-row asset-manual-actions">
             <button id="manualAssetAddBtn" type="submit" class="btn btn-primary">자산 추가</button>
           </div>
-          <div class="form-hint">필수값은 자산명/자산타입/평가금액이며, 부채 타입은 음수로 저장됩니다.</div>
+          <div class="form-hint">${this.escapeHtml(typeOptionHint)}</div>
           ${errorHtml}
         </form>
       `;
     },
 
+    renderManualTypeOptionFields(type, draft) {
+      if (MARKET_OPTION_TYPES.includes(type)) {
+        return `
+          <div>
+            <label class="form-label" for="manualAssetTicker">티커</label>
+            <input id="manualAssetTicker" class="form-input" data-manual-field="ticker" type="text" value="${this.escapeHtml(draft.ticker || '')}" placeholder="예: TSLA" />
+          </div>
+          <div>
+            <label class="form-label" for="manualAssetMarket">시장</label>
+            <input id="manualAssetMarket" class="form-input" data-manual-field="market" type="text" value="${this.escapeHtml(draft.market || '')}" placeholder="예: NASDAQ" />
+          </div>
+          <div>
+            <label class="form-label" for="manualAssetQuantity">수량(옵션)</label>
+            <input id="manualAssetQuantity" class="form-input" data-manual-field="quantity" type="number" step="any" value="${this.escapeHtml(draft.quantity || '')}" placeholder="예: 12.5" />
+          </div>
+          <div>
+            <label class="form-label" for="manualAssetManualPrice">현재가 1주(옵션)</label>
+            <input id="manualAssetManualPrice" class="form-input" data-manual-field="manualPrice" type="number" step="any" value="${this.escapeHtml(
+              draft.manualPrice || ''
+            )}" placeholder="예: 120000" />
+          </div>
+        `;
+      }
+
+      if (BANK_OPTION_TYPES.includes(type)) {
+        return `
+          <div>
+            <label class="form-label" for="manualAssetBankName">기관명(옵션)</label>
+            <input id="manualAssetBankName" class="form-input" data-manual-field="bankName" type="text" value="${this.escapeHtml(draft.bankName || '')}" placeholder="예: 국민은행" />
+          </div>
+          <div>
+            <label class="form-label" for="manualAssetAccountNumber">계좌/계약번호(옵션)</label>
+            <input id="manualAssetAccountNumber" class="form-input" data-manual-field="accountNumber" type="text" value="${this.escapeHtml(
+              draft.accountNumber || ''
+            )}" placeholder="예: 123-456-7890" />
+          </div>
+          <div>
+            <label class="form-label" for="manualAssetInterestRatePct">금리(연, %)</label>
+            <input id="manualAssetInterestRatePct" class="form-input" data-manual-field="interestRatePct" type="number" step="any" value="${this.escapeHtml(
+              draft.interestRatePct || ''
+            )}" placeholder="예: 3.2" />
+          </div>
+          <div>
+            <label class="form-label" for="manualAssetMaturityDate">만기일</label>
+            <input id="manualAssetMaturityDate" class="form-input" data-manual-field="maturityDate" type="date" value="${this.escapeHtml(
+              draft.maturityDate || ''
+            )}" />
+          </div>
+        `;
+      }
+
+      if (type === 'real_estate') {
+        return `
+          <div>
+            <label class="form-label" for="manualAssetMarket">지역/시장(옵션)</label>
+            <input id="manualAssetMarket" class="form-input" data-manual-field="market" type="text" value="${this.escapeHtml(draft.market || '')}" placeholder="예: 서울" />
+          </div>
+        `;
+      }
+
+      return '';
+    },
+
+    getManualTypeOptionHint(type) {
+      if (MARKET_OPTION_TYPES.includes(type)) {
+        return '필수값은 자산명/자산타입/평가금액입니다. 수량과 현재가를 같이 입력하면 평가금액이 비어있을 때 자동 계산됩니다.';
+      }
+      if (BANK_OPTION_TYPES.includes(type)) {
+        return '필수값은 자산명/자산타입/평가금액입니다. 예금/보험/연금/부채는 기관명, 계좌번호, 금리, 만기일 옵션을 입력할 수 있습니다.';
+      }
+      if (type === 'real_estate') {
+        return '필수값은 자산명/자산타입/평가금액입니다. 부동산은 지역/시장 정보를 옵션으로 기록할 수 있습니다.';
+      }
+      return '필수값은 자산명/자산타입/평가금액이며, 부채 타입은 음수로 저장됩니다.';
+    },
+
     bindAssetCrudEvents() {
       const manualForm = document.getElementById('manualAssetForm');
       if (manualForm) {
-        manualForm.addEventListener('input', (event) => {
-          const target = event.target;
+        const syncDraftField = (target, rerenderOnType = false) => {
           const field = target?.dataset?.manualField;
           if (!field) return;
           const nextDraft = { ...(this.state.manualAssetDraft || this.createDefaultManualAssetDraft()) };
           nextDraft[field] = target.value || '';
           this.state.manualAssetDraft = nextDraft;
           if (this.state.manualAssetError) this.state.manualAssetError = '';
+
+          if (rerenderOnType && field === 'type') {
+            this.renderAssetsPage(document.getElementById('page-content'));
+          }
+        };
+
+        manualForm.addEventListener('input', (event) => {
+          syncDraftField(event.target, false);
+        });
+
+        manualForm.addEventListener('change', (event) => {
+          syncDraftField(event.target, true);
         });
 
         manualForm.addEventListener('submit', (event) => {
@@ -618,8 +778,20 @@
       const draft = this.state.manualAssetDraft || this.createDefaultManualAssetDraft();
       const name = this.toStringValue(draft.name);
       const type = this.normalizeAssetType(draft.type || 'other');
-      const valuationInput = this.toNumber(draft.valuation);
+      const valuationDirect = this.toNumber(draft.valuation);
+      const quantity = this.toNumber(draft.quantity);
+      const manualPrice = this.toNumber(draft.manualPrice);
+      const derivedValuation =
+        quantity !== null && manualPrice !== null && quantity > 0 && manualPrice > 0 ? quantity * manualPrice : null;
+      const useDerivedValuation = (valuationDirect === null || valuationDirect === 0) && MARKET_OPTION_TYPES.includes(type) && derivedValuation !== null;
+      const valuationInput = useDerivedValuation ? derivedValuation : valuationDirect;
       const currency = this.normalizeJsonCurrency(draft.currency).currency;
+      const ticker = MARKET_OPTION_TYPES.includes(type) ? this.toStringValue(draft.ticker) : null;
+      const market = MARKET_OPTION_TYPES.includes(type) || type === 'real_estate' ? this.toStringValue(draft.market) : null;
+      const bankName = BANK_OPTION_TYPES.includes(type) ? this.toStringValue(draft.bankName) : null;
+      const accountNumber = BANK_OPTION_TYPES.includes(type) ? this.toStringValue(draft.accountNumber) : null;
+      const interestRatePct = BANK_OPTION_TYPES.includes(type) ? this.toNumber(draft.interestRatePct) : null;
+      const maturityDate = BANK_OPTION_TYPES.includes(type) ? this.toStringValue(draft.maturityDate) : null;
 
       if (!name) {
         this.state.manualAssetError = '자산명을 입력해주세요.';
@@ -647,22 +819,25 @@
         currency,
         valueInput: type === 'liability' ? Math.abs(valuation) : valuation,
         valuationDisplay: valuation,
-        quantity: null,
-        manualPrice: null,
+        quantity: MARKET_OPTION_TYPES.includes(type) ? quantity : null,
+        manualPrice: MARKET_OPTION_TYPES.includes(type) ? manualPrice : null,
         owner: this.toStringValue(draft.owner),
-        ticker: this.toStringValue(draft.ticker),
-        market: this.toStringValue(draft.market),
+        ticker,
+        market,
         avgCost: null,
-        bankName: null,
-        accountNumber: null,
-        interestRatePct: null,
-        maturityDate: null,
+        bankName,
+        accountNumber,
+        interestRatePct,
+        maturityDate,
       };
 
       asset.valuation = this.computeAssetValuation(asset);
       this.state.assets = [...this.state.assets, asset];
       this.state.dashboard = this.buildDashboard(this.state.assets, null);
-      this.state.message = `자산 추가 완료: ${asset.name}`;
+      this.saveDataSnapshot();
+      this.state.message = useDerivedValuation
+        ? `자산 추가 완료: ${asset.name} (수량×현재가로 평가금액 자동 계산)`
+        : `자산 추가 완료: ${asset.name}`;
       this.state.messageType = 'info';
       this.resetManualAssetDraft();
       this.renderDataToolbar();
@@ -678,6 +853,7 @@
       this.state.assets.splice(index, 1);
       this.state.assets = this.state.assets.slice();
       this.state.dashboard = this.buildDashboard(this.state.assets, null);
+      this.saveDataSnapshot();
       this.state.message = `자산 삭제 완료: ${target?.name || '-'}`;
       this.state.messageType = 'info';
       this.renderDataToolbar();
@@ -1212,6 +1388,7 @@
 
       this.state.assets = list;
       this.state.dashboard = this.buildDashboard(list, null);
+      this.saveDataSnapshot();
       return { created, updated };
     },
 
