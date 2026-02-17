@@ -3351,9 +3351,165 @@ body {
     margin: 12px 0 16px;
 }
 
+.asset-manual-form {
+    margin-top: 4px;
+}
+
+.asset-manual-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+}
+
+.asset-manual-actions {
+    margin-top: 12px;
+    margin-bottom: 8px;
+}
+
+.asset-delete-btn {
+    min-width: 52px;
+}
+
+.asset-summary-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.asset-json-importer {
+    margin-top: 4px;
+    padding: 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+}
+
+.asset-json-prompt-card {
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px dashed var(--border-color);
+    background: var(--bg-card);
+}
+
+.asset-json-prompt-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.asset-json-prompt-body {
+    margin: 0;
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-size: 12px;
+    line-height: 1.45;
+    max-height: 220px;
+    overflow: auto;
+}
+
+.asset-json-textarea {
+    min-height: 180px;
+    font-family: 'JetBrains Mono', 'SF Mono', 'Monaco', monospace;
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.json-import-status {
+    margin-top: 8px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    border: 1px solid transparent;
+}
+
+.json-import-status.is-success {
+    color: var(--accent-green);
+    background: var(--accent-green-light);
+    border-color: rgba(16, 185, 129, 0.35);
+}
+
+.json-import-status.is-error {
+    color: var(--accent-red);
+    background: var(--accent-red-light);
+    border-color: rgba(239, 68, 68, 0.35);
+}
+
+.asset-json-preview-wrap {
+    margin-top: 10px;
+    overflow-x: auto;
+}
+
+.asset-json-preview-table {
+    min-width: 960px;
+}
+
+.asset-json-status-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 700;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+
+.asset-json-status-badge.is-valid {
+    color: var(--accent-green);
+    background: var(--accent-green-light);
+    border-color: rgba(16, 185, 129, 0.35);
+}
+
+.asset-json-status-badge.is-fallback {
+    color: #b45309;
+    background: rgba(245, 158, 11, 0.16);
+    border-color: rgba(245, 158, 11, 0.35);
+}
+
+.asset-json-status-badge.is-invalid {
+    color: var(--accent-red);
+    background: var(--accent-red-light);
+    border-color: rgba(239, 68, 68, 0.35);
+}
+
+.asset-json-cell-input,
+.asset-json-cell-select {
+    min-width: 110px;
+    padding: 6px 8px;
+    font-size: 12px;
+}
+
+.asset-json-cell-input-num {
+    text-align: right;
+}
+
 @media (max-width: 768px) {
     .asset-filter-row {
         grid-template-columns: 1fr;
+    }
+
+    .asset-summary {
+        align-items: flex-start;
+        gap: 8px;
+        flex-direction: column;
+    }
+
+    .asset-summary-actions {
+        width: 100%;
+        justify-content: space-between;
+    }
+
+    .asset-json-prompt-header {
+        flex-direction: column;
+        align-items: flex-start;
     }
 
     .file-loader-actions {

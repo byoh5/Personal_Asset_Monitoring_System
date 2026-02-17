@@ -53,6 +53,60 @@
     기타: 'other',
   };
 
+  const CURRENCY_OPTIONS = ['KRW', 'USD', 'EUR', 'JPY', 'CNY', 'HKD'];
+
+  const PiePercentLabelPlugin = {
+    id: 'piePercentLabel',
+    afterDatasetsDraw(chart, _args, pluginOptions) {
+      if (!chart || !chart.data || !Array.isArray(chart.data.datasets) || !chart.data.datasets.length) return;
+
+      const dataset = chart.data.datasets[0];
+      const rawData = Array.isArray(dataset.data) ? dataset.data : [];
+      const values = rawData.map((value) => Number(value || 0));
+      const total = values.reduce((sum, value) => (Number.isFinite(value) && value > 0 ? sum + value : sum), 0);
+      if (!total) return;
+
+      const options = pluginOptions || {};
+      const minPercent = Number(options.minPercent ?? 3);
+      const fontSize = Number(options.fontSize ?? 14);
+      const fillColor = options.color || '#f8fafc';
+      const strokeColor = options.strokeColor || 'rgba(15, 23, 42, 0.7)';
+      const strokeWidth = Number(options.strokeWidth ?? 3);
+
+      const meta = chart.getDatasetMeta(0);
+      if (!meta || !Array.isArray(meta.data)) return;
+
+      const ctx = chart.ctx;
+      ctx.save();
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = `700 ${fontSize}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+      ctx.fillStyle = fillColor;
+      ctx.strokeStyle = strokeColor;
+      ctx.lineWidth = strokeWidth;
+      ctx.lineJoin = 'round';
+
+      meta.data.forEach((arc, index) => {
+        const value = values[index];
+        if (!(value > 0)) return;
+        const percent = (value / total) * 100;
+        if (percent < minPercent) return;
+
+        const position = typeof arc.tooltipPosition === 'function' ? arc.tooltipPosition() : null;
+        if (!position) return;
+
+        const label = `${percent.toFixed(0)}%`;
+        if (strokeWidth > 0) ctx.strokeText(label, position.x, position.y);
+        ctx.fillText(label, position.x, position.y);
+      });
+      ctx.restore();
+    },
+  };
+
+  if (typeof Chart !== 'undefined' && typeof Chart.register === 'function') {
+    Chart.register(PiePercentLabelPlugin);
+  }
+
   const ThemeManager = {
     init() {
       const saved = localStorage.getItem(STORAGE.theme) || 'dark';
@@ -94,6 +148,22 @@
       messageType: 'info',
       filterText: '',
       filterType: 'all',
+      jsonDraft: '',
+      jsonPreviewRows: [],
+      jsonPreviewSummary: null,
+      jsonValidRows: [],
+      jsonStatus: '',
+      jsonStatusType: 'info',
+      manualAssetDraft: {
+        name: '',
+        type: 'stock',
+        valuation: '',
+        currency: 'KRW',
+        ticker: '',
+        market: '',
+        owner: '',
+      },
+      manualAssetError: '',
     },
 
     menuItems: [
@@ -185,7 +255,9 @@
 
       const metaText = this.state.fileMeta
         ? `최근 로딩 파일: ${this.escapeHtml(this.state.fileMeta.name)} · ${this.formatTimestamp(this.state.fileMeta.loadedAt)}`
-        : '아직 파일이 로딩되지 않았습니다.';
+        : this.state.assets.length
+          ? '엑셀 미로딩 상태입니다. 현재 자산은 웹 화면에서 직접 추가한 임시 데이터입니다.'
+          : '아직 파일이 로딩되지 않았습니다.';
 
       const messageHtml = this.state.message
         ? `<div class="connection-banner ${this.state.messageType === 'error' ? 'connection-banner-error' : 'connection-banner-warning'}" style="margin-top: 12px;"><span class="connection-banner-icon">${this.state.messageType === 'error' ? '⚠️' : 'ℹ️'}</span><div class="connection-banner-text">${this.escapeHtml(this.state.message)}</div></div>`
@@ -196,9 +268,9 @@
           <div class="file-loader-row">
             <div>
               <h3 class="card-title" style="margin:0;">엑셀 기반 조회 데이터</h3>
-              <div class="card-subtitle">기존 프로젝트에서 Export한 자산 엑셀 파일을 선택하세요.</div>
+              <div class="card-subtitle">엑셀 파일 로딩 없이도 자산 페이지에서 직접 추가/삭제할 수 있습니다.</div>
               <div class="form-hint" style="margin-top: 8px;">${metaText}</div>
-              <div class="form-hint">브라우저 보안 정책상 새로고침 후에는 파일을 다시 선택해야 합니다.</div>
+              <div class="form-hint">엑셀을 불러오지 않고 시작한 데이터도 [엑셀 저장]으로 내보낼 수 있습니다.</div>
             </div>
             <div class="file-loader-actions">
               <label for="excelFileInput" class="btn btn-primary">엑셀 파일 선택</label>
@@ -240,6 +312,8 @@
         this.state.messageType = 'info';
         this.state.filterText = '';
         this.state.filterType = 'all';
+        this.resetJsonImporterState();
+        this.resetManualAssetDraft();
 
         this.saveFileMeta({
           name: file.name,
@@ -267,8 +341,36 @@
       this.state.messageType = 'info';
       this.state.filterText = '';
       this.state.filterType = 'all';
+      this.resetJsonImporterState();
+      this.resetManualAssetDraft();
       this.renderDataToolbar();
       this.renderPage(this.currentPage);
+    },
+
+    createDefaultManualAssetDraft() {
+      return {
+        name: '',
+        type: 'stock',
+        valuation: '',
+        currency: 'KRW',
+        ticker: '',
+        market: '',
+        owner: '',
+      };
+    },
+
+    resetManualAssetDraft() {
+      this.state.manualAssetDraft = this.createDefaultManualAssetDraft();
+      this.state.manualAssetError = '';
+    },
+
+    resetJsonImporterState() {
+      this.state.jsonDraft = '';
+      this.state.jsonPreviewRows = [];
+      this.state.jsonPreviewSummary = null;
+      this.state.jsonValidRows = [];
+      this.state.jsonStatus = '';
+      this.state.jsonStatusType = 'info';
     },
 
     renderPage(page) {
@@ -342,11 +444,6 @@
     },
 
     renderAssetsPage(container) {
-      if (!this.state.assets.length) {
-        container.innerHTML = this.renderEmptyState('자산 목록을 보려면 엑셀 파일을 먼저 선택하세요.');
-        return;
-      }
-
       const typeOptions = this.getTypeOptions();
       const filtered = this.getFilteredAssets();
       const total = filtered.reduce((sum, asset) => sum + (asset.valuation || 0), 0);
@@ -354,7 +451,12 @@
       container.innerHTML = `
         <div class="page-header">
           <h1 class="page-title">자산</h1>
-          <p class="page-subtitle">엑셀에 저장된 자산 정보를 조회합니다.</p>
+          <p class="page-subtitle">엑셀 없이도 직접 입력 또는 JSON 붙여넣기로 자산을 관리할 수 있습니다.</p>
+        </div>
+
+        <div class="chart-container">
+          <h3>직접 자산 입력</h3>
+          ${this.renderManualAssetEditor()}
         </div>
 
         <div class="chart-container">
@@ -378,14 +480,26 @@
 
           <div class="asset-summary">
             <span>표시 자산 ${filtered.length}건 합계</span>
-            <strong>${this.formatCurrency(total)}</strong>
+            <div class="asset-summary-actions">
+              <strong>${this.formatCurrency(total)}</strong>
+              <button id="exportAssetsExcelBtn" type="button" class="btn btn-secondary" ${this.state.assets.length ? '' : 'disabled'}>엑셀 저장</button>
+            </div>
           </div>
 
-          ${filtered.length ? this.renderAssetsTable(filtered) : this.renderEmptyState('조건에 맞는 자산이 없습니다.', true)}
+          ${filtered.length
+            ? this.renderAssetsTable(filtered)
+            : this.renderEmptyState(this.state.assets.length ? '조건에 맞는 자산이 없습니다.' : '등록된 자산이 없습니다. 직접 입력 또는 JSON 입력기를 사용하세요.', true)}
+        </div>
+
+        <div class="chart-container">
+          <h3>JSON 자산 입력기</h3>
+          ${this.renderJsonImporter()}
         </div>
       `;
 
       this.bindAssetFilterEvents();
+      this.bindAssetCrudEvents();
+      this.bindJsonImporterEvents();
     },
 
     bindAssetFilterEvents() {
@@ -416,6 +530,160 @@
       }
     },
 
+    renderManualAssetEditor() {
+      const draft = this.state.manualAssetDraft || this.createDefaultManualAssetDraft();
+      const errorHtml = this.state.manualAssetError
+        ? `<div class="form-error" style="margin-top:8px; margin-bottom:0;">${this.escapeHtml(this.state.manualAssetError)}</div>`
+        : '';
+
+      return `
+        <form id="manualAssetForm" class="asset-manual-form">
+          <div class="asset-manual-grid">
+            <div>
+              <label class="form-label" for="manualAssetName">자산명 *</label>
+              <input id="manualAssetName" class="form-input" data-manual-field="name" type="text" value="${this.escapeHtml(draft.name || '')}" placeholder="예: 삼성전자" />
+            </div>
+            <div>
+              <label class="form-label" for="manualAssetType">자산타입 *</label>
+              <select id="manualAssetType" class="form-select" data-manual-field="type">
+                ${this.renderTypeSelectOptions(draft.type || 'stock')}
+              </select>
+            </div>
+            <div>
+              <label class="form-label" for="manualAssetValuation">평가금액 *</label>
+              <input id="manualAssetValuation" class="form-input" data-manual-field="valuation" type="number" step="any" value="${this.escapeHtml(
+                draft.valuation || ''
+              )}" placeholder="예: 1000000" />
+            </div>
+            <div>
+              <label class="form-label" for="manualAssetCurrency">통화</label>
+              <select id="manualAssetCurrency" class="form-select" data-manual-field="currency">
+                ${this.renderCurrencySelectOptions(draft.currency || 'KRW')}
+              </select>
+            </div>
+            <div>
+              <label class="form-label" for="manualAssetTicker">티커</label>
+              <input id="manualAssetTicker" class="form-input" data-manual-field="ticker" type="text" value="${this.escapeHtml(draft.ticker || '')}" placeholder="예: TSLA" />
+            </div>
+            <div>
+              <label class="form-label" for="manualAssetMarket">시장</label>
+              <input id="manualAssetMarket" class="form-input" data-manual-field="market" type="text" value="${this.escapeHtml(draft.market || '')}" placeholder="예: NASDAQ" />
+            </div>
+            <div>
+              <label class="form-label" for="manualAssetOwner">소유자</label>
+              <input id="manualAssetOwner" class="form-input" data-manual-field="owner" type="text" value="${this.escapeHtml(draft.owner || '')}" placeholder="예: 본인" />
+            </div>
+          </div>
+          <div class="form-row asset-manual-actions">
+            <button id="manualAssetAddBtn" type="submit" class="btn btn-primary">자산 추가</button>
+          </div>
+          <div class="form-hint">필수값은 자산명/자산타입/평가금액이며, 부채 타입은 음수로 저장됩니다.</div>
+          ${errorHtml}
+        </form>
+      `;
+    },
+
+    bindAssetCrudEvents() {
+      const manualForm = document.getElementById('manualAssetForm');
+      if (manualForm) {
+        manualForm.addEventListener('input', (event) => {
+          const target = event.target;
+          const field = target?.dataset?.manualField;
+          if (!field) return;
+          const nextDraft = { ...(this.state.manualAssetDraft || this.createDefaultManualAssetDraft()) };
+          nextDraft[field] = target.value || '';
+          this.state.manualAssetDraft = nextDraft;
+          if (this.state.manualAssetError) this.state.manualAssetError = '';
+        });
+
+        manualForm.addEventListener('submit', (event) => {
+          event.preventDefault();
+          this.addManualAsset();
+        });
+      }
+
+      const table = document.getElementById('assetsTable');
+      if (table) {
+        table.addEventListener('click', (event) => {
+          const button = event.target.closest('.asset-delete-btn');
+          if (!button) return;
+          const index = Number(button.dataset.assetIndex || '');
+          if (!Number.isInteger(index) || index < 0) return;
+          this.deleteAssetByIndex(index);
+        });
+      }
+    },
+
+    addManualAsset() {
+      const draft = this.state.manualAssetDraft || this.createDefaultManualAssetDraft();
+      const name = this.toStringValue(draft.name);
+      const type = this.normalizeAssetType(draft.type || 'other');
+      const valuationInput = this.toNumber(draft.valuation);
+      const currency = this.normalizeJsonCurrency(draft.currency).currency;
+
+      if (!name) {
+        this.state.manualAssetError = '자산명을 입력해주세요.';
+        this.renderAssetsPage(document.getElementById('page-content'));
+        return;
+      }
+
+      if (valuationInput === null || valuationInput === 0) {
+        this.state.manualAssetError = '평가금액은 0이 아닌 숫자여야 합니다.';
+        this.renderAssetsPage(document.getElementById('page-content'));
+        return;
+      }
+
+      if (type !== 'liability' && valuationInput < 0) {
+        this.state.manualAssetError = '비부채 타입은 평가금액을 양수로 입력해주세요.';
+        this.renderAssetsPage(document.getElementById('page-content'));
+        return;
+      }
+
+      const valuation = type === 'liability' ? -Math.abs(valuationInput) : valuationInput;
+      const asset = {
+        id: this.generateAssetId({ type, name }),
+        name,
+        type,
+        currency,
+        valueInput: type === 'liability' ? Math.abs(valuation) : valuation,
+        valuationDisplay: valuation,
+        quantity: null,
+        manualPrice: null,
+        owner: this.toStringValue(draft.owner),
+        ticker: this.toStringValue(draft.ticker),
+        market: this.toStringValue(draft.market),
+        avgCost: null,
+        bankName: null,
+        accountNumber: null,
+        interestRatePct: null,
+        maturityDate: null,
+      };
+
+      asset.valuation = this.computeAssetValuation(asset);
+      this.state.assets = [...this.state.assets, asset];
+      this.state.dashboard = this.buildDashboard(this.state.assets, null);
+      this.state.message = `자산 추가 완료: ${asset.name}`;
+      this.state.messageType = 'info';
+      this.resetManualAssetDraft();
+      this.renderDataToolbar();
+      this.renderAssetsPage(document.getElementById('page-content'));
+    },
+
+    deleteAssetByIndex(index) {
+      if (!Array.isArray(this.state.assets) || index < 0 || index >= this.state.assets.length) return;
+      const target = this.state.assets[index];
+      const confirmed = window.confirm(`자산을 삭제하시겠습니까?\n${target?.name || '이름 없음'}`);
+      if (!confirmed) return;
+
+      this.state.assets.splice(index, 1);
+      this.state.assets = this.state.assets.slice();
+      this.state.dashboard = this.buildDashboard(this.state.assets, null);
+      this.state.message = `자산 삭제 완료: ${target?.name || '-'}`;
+      this.state.messageType = 'info';
+      this.renderDataToolbar();
+      this.renderAssetsPage(document.getElementById('page-content'));
+    },
+
     renderAssetsTable(assets) {
       return `
         <div style="overflow-x:auto;">
@@ -432,12 +700,14 @@
                 <th>소유자</th>
                 <th>티커</th>
                 <th>시장</th>
+                <th>관리</th>
               </tr>
             </thead>
             <tbody>
               ${assets
-                .map(
-                  (asset) => `
+                .map((asset) => {
+                  const assetIndex = this.state.assets.indexOf(asset);
+                  return `
                 <tr>
                   <td>${this.escapeHtml(asset.name || '-')}</td>
                   <td>${this.escapeHtml(this.getAssetTypeLabel(asset.type))}</td>
@@ -449,14 +719,629 @@
                   <td>${this.escapeHtml(asset.owner || '-')}</td>
                   <td>${this.escapeHtml(asset.ticker || '-')}</td>
                   <td>${this.escapeHtml(asset.market || '-')}</td>
+                  <td>
+                    <button type="button" class="btn btn-secondary btn-compact asset-delete-btn" data-asset-index="${assetIndex}" ${
+                      assetIndex < 0 ? 'disabled' : ''
+                    }>삭제</button>
+                  </td>
                 </tr>
               `
-                )
+                })
                 .join('')}
             </tbody>
           </table>
         </div>
       `;
+    },
+
+    renderJsonImporter() {
+      const draft = this.escapeHtml(this.state.jsonDraft || '');
+      const prompt = this.escapeHtml(this.getJsonAssetPrompt());
+      const summary = this.state.jsonPreviewSummary
+        ? `<div class="form-hint" style="margin-top:8px;">총 ${this.state.jsonPreviewSummary.total}건, 유효 ${this.state.jsonPreviewSummary.valid}건, 오류 ${this.state.jsonPreviewSummary.invalid}건, 기타 폴백 ${this.state.jsonPreviewSummary.fallback}건</div>`
+        : '';
+      const status = this.state.jsonStatus
+        ? `<div class="json-import-status ${this.state.jsonStatusType === 'error' ? 'is-error' : 'is-success'}">${this.escapeHtml(this.state.jsonStatus)}</div>`
+        : '';
+      const applyDisabled = this.state.jsonValidRows.length ? '' : 'disabled';
+      const editableHint = this.state.jsonPreviewRows.length
+        ? `<div class="form-hint" style="margin-top:6px;">미리보기 표에서 자산명/타입/평가금액/통화를 수정하면 즉시 재검증됩니다.</div>`
+        : '';
+
+      return `
+        <div class="asset-json-importer">
+          <p class="form-hint" style="margin-top:0;">자산 화면 캡처 + 프롬프트를 외부 AI(ChatGPT/Copilot 등)에 전달해 JSON을 생성한 뒤 붙여넣으세요.</p>
+          <div class="asset-json-prompt-card">
+            <div class="asset-json-prompt-header">
+              <strong>외부 LLM 프롬프트</strong>
+              <button id="copyJsonPromptBtn" type="button" class="btn btn-secondary btn-compact">프롬프트 복사</button>
+            </div>
+            <pre class="asset-json-prompt-body">${prompt}</pre>
+          </div>
+
+          <label class="form-label" for="assetJsonInput" style="margin-top:10px;">JSON 입력</label>
+          <textarea id="assetJsonInput" class="form-input asset-json-textarea" placeholder='{"assets":[{"name":"...", "type":"stock", "valuation":1000000}]}' >${draft}</textarea>
+
+          <div class="form-row" style="margin-top:10px; margin-bottom:0;">
+            <button id="previewJsonBtn" type="button" class="btn btn-secondary">미리보기</button>
+            <button id="applyJsonBtn" type="button" class="btn btn-primary" ${applyDisabled}>자산 반영</button>
+          </div>
+
+          ${status}
+          ${summary}
+          ${editableHint}
+          ${this.renderJsonPreviewTable()}
+        </div>
+      `;
+    },
+
+    renderJsonPreviewTable() {
+      if (!this.state.jsonPreviewRows.length) return '';
+
+      return `
+        <div class="asset-json-preview-wrap">
+          <table class="audit-table asset-json-preview-table" id="jsonPreviewTable">
+            <thead>
+              <tr>
+                <th>행</th>
+                <th>상태</th>
+                <th>자산명</th>
+                <th>자산타입</th>
+                <th>평가금액</th>
+                <th>통화</th>
+                <th>티커</th>
+                <th>메시지</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${this.state.jsonPreviewRows
+                .map((row) => {
+                  const badgeClass = row.valid ? (row.typeFallback ? 'is-fallback' : 'is-valid') : 'is-invalid';
+                  const badgeText = row.valid ? (row.typeFallback ? '기타 폴백' : '유효') : '오류';
+                  return `
+                    <tr>
+                      <td>${row.rowNo}</td>
+                      <td><span class="asset-json-status-badge ${badgeClass}">${badgeText}</span></td>
+                      <td><input class="form-input asset-json-cell-input" type="text" data-json-row-no="${row.rowNo}" data-json-field="name" value="${this.escapeHtml(row.source.name || '')}" /></td>
+                      <td>
+                        <select class="form-select asset-json-cell-select" data-json-row-no="${row.rowNo}" data-json-field="type">
+                          ${this.renderTypeSelectOptions(row.type)}
+                        </select>
+                      </td>
+                      <td><input class="form-input asset-json-cell-input asset-json-cell-input-num" type="number" data-json-row-no="${row.rowNo}" data-json-field="valuation" value="${row.source.valuation === null ? '' : this.escapeHtml(String(row.source.valuation))}" /></td>
+                      <td>
+                        <select class="form-select asset-json-cell-select" data-json-row-no="${row.rowNo}" data-json-field="currency">
+                          ${this.renderCurrencySelectOptions(row.currency)}
+                        </select>
+                      </td>
+                      <td><input class="form-input asset-json-cell-input" type="text" data-json-row-no="${row.rowNo}" data-json-field="ticker" value="${this.escapeHtml(row.source.ticker || '')}" /></td>
+                      <td>${this.escapeHtml(row.message || '-')}</td>
+                    </tr>
+                  `;
+                })
+                .join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    },
+
+    bindJsonImporterEvents() {
+      const copyBtn = document.getElementById('copyJsonPromptBtn');
+      if (copyBtn) {
+        copyBtn.addEventListener('click', async () => {
+          const ok = await this.copyToClipboard(this.getJsonAssetPrompt());
+          this.state.jsonStatus = ok ? '프롬프트를 복사했습니다.' : '프롬프트 복사에 실패했습니다.';
+          this.state.jsonStatusType = ok ? 'info' : 'error';
+          this.renderAssetsPage(document.getElementById('page-content'));
+        });
+      }
+
+      const input = document.getElementById('assetJsonInput');
+      if (input) {
+        input.addEventListener('input', () => {
+          this.state.jsonDraft = input.value || '';
+          this.state.jsonPreviewRows = [];
+          this.state.jsonValidRows = [];
+          this.state.jsonPreviewSummary = null;
+          this.state.jsonStatus = '';
+          this.state.jsonStatusType = 'info';
+          const applyBtn = document.getElementById('applyJsonBtn');
+          if (applyBtn) applyBtn.disabled = true;
+        });
+      }
+
+      const previewBtn = document.getElementById('previewJsonBtn');
+      if (previewBtn) {
+        previewBtn.addEventListener('click', () => {
+          const raw = (document.getElementById('assetJsonInput')?.value || '').trim();
+          this.state.jsonDraft = raw;
+          const parsed = this.parseJsonAssetInput(raw);
+          if (parsed.error) {
+            this.state.jsonPreviewRows = [];
+            this.state.jsonValidRows = [];
+            this.state.jsonPreviewSummary = null;
+            this.state.jsonStatus = parsed.error;
+            this.state.jsonStatusType = 'error';
+            this.renderAssetsPage(document.getElementById('page-content'));
+            return;
+          }
+
+          const preview = this.buildJsonPreview(parsed.items);
+          this.state.jsonPreviewRows = preview.rows;
+          this.state.jsonValidRows = preview.validRows;
+          this.state.jsonPreviewSummary = preview.summary;
+          this.state.jsonStatus = '';
+          this.state.jsonStatusType = 'info';
+          this.renderAssetsPage(document.getElementById('page-content'));
+        });
+      }
+
+      const applyBtn = document.getElementById('applyJsonBtn');
+      if (applyBtn) {
+        applyBtn.addEventListener('click', () => {
+          if (!this.state.jsonValidRows.length) {
+            this.state.jsonStatus = '반영 가능한 유효 행이 없습니다.';
+            this.state.jsonStatusType = 'error';
+            this.renderAssetsPage(document.getElementById('page-content'));
+            return;
+          }
+
+          const result = this.applyJsonRowsToAssets(this.state.jsonValidRows);
+          this.state.jsonStatus = `반영 완료: 신규 ${result.created}건, 수정 ${result.updated}건`;
+          this.state.jsonStatusType = 'info';
+          this.state.jsonPreviewRows = [];
+          this.state.jsonValidRows = [];
+          this.state.jsonPreviewSummary = null;
+          this.state.jsonDraft = '';
+          this.state.message = 'JSON 입력 결과가 자산 목록에 반영되었습니다.';
+          this.state.messageType = 'info';
+          this.renderDataToolbar();
+          this.renderAssetsPage(document.getElementById('page-content'));
+        });
+      }
+
+      const exportBtn = document.getElementById('exportAssetsExcelBtn');
+      if (exportBtn) {
+        exportBtn.addEventListener('click', () => {
+          this.exportAssetsToExcel();
+        });
+      }
+
+      const previewTable = document.getElementById('jsonPreviewTable');
+      if (previewTable) {
+        previewTable.addEventListener('change', (event) => {
+          const target = event.target;
+          if (!target || !target.dataset) return;
+          const rowNo = Number(target.dataset.jsonRowNo || '');
+          const field = (target.dataset.jsonField || '').trim();
+          if (!rowNo || !field) return;
+          this.updateJsonPreviewRow(rowNo, field, target.value);
+        });
+      }
+    },
+
+    getJsonAssetPrompt() {
+      return [
+        'Extract asset records from the image and return JSON only.',
+        'Output schema:',
+        '{"assets":[{"name":"", "type":"stock|etf|deposit|cash|gold|real_estate|crypto|bond|fund|pension|insurance|liability|other", "valuation":0, "currency":"KRW", "ticker":"", "market":"", "note":""}]}',
+        'Rules:',
+        '- Required: name, type, valuation',
+        '- valuation means current total asset value, NOT profit/loss',
+        '- If type is unknown, set type to "other"',
+        '- For non-liability types, valuation must be > 0',
+        '- Return pure JSON only (no markdown or explanation)',
+      ].join('\n');
+    },
+
+    async copyToClipboard(text) {
+      const raw = String(text || '');
+      if (!raw) return false;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(raw);
+          return true;
+        }
+      } catch (error) {
+        console.warn('Clipboard API failed:', error);
+      }
+
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = raw;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        return ok;
+      } catch (error) {
+        console.warn('Fallback copy failed:', error);
+        return false;
+      }
+    },
+
+    parseJsonAssetInput(rawText) {
+      const raw = (rawText || '').trim();
+      if (!raw) return { error: 'JSON 입력이 비어 있습니다.', items: [] };
+
+      const unfenced = this.stripJsonCodeFence(raw);
+      const normalized = this.normalizeJsonInputQuotes(unfenced);
+      let parsed;
+      try {
+        parsed = JSON.parse(unfenced);
+      } catch (firstError) {
+        try {
+          parsed = JSON.parse(normalized);
+        } catch (secondError) {
+          return { error: 'JSON 형식이 올바르지 않습니다.', items: [] };
+        }
+      }
+
+      if (Array.isArray(parsed)) return { error: null, items: parsed };
+      if (parsed && typeof parsed === 'object' && Array.isArray(parsed.assets)) {
+        return { error: null, items: parsed.assets };
+      }
+      return { error: '루트는 배열 또는 {"assets":[...]} 형식이어야 합니다.', items: [] };
+    },
+
+    stripJsonCodeFence(raw) {
+      const trimmed = (raw || '').trim();
+      const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+      if (fenced && fenced[1]) return fenced[1].trim();
+      return trimmed;
+    },
+
+    normalizeJsonInputQuotes(raw) {
+      return String(raw || '')
+        .replace(/[“”＂]/g, '"')
+        .replace(/[‘’＇]/g, "'");
+    },
+
+    buildJsonPreview(items) {
+      const rows = [];
+      for (let i = 0; i < items.length; i += 1) {
+        rows.push(this.normalizeJsonPreviewRow(items[i], i + 1));
+      }
+      const state = this.computeJsonPreviewState(rows);
+      return { rows, validRows: state.validRows, summary: state.summary };
+    },
+
+    computeJsonPreviewState(rows) {
+      const list = Array.isArray(rows) ? rows : [];
+      const validRows = list.filter((row) => row.valid);
+      return {
+        validRows,
+        summary: {
+          total: list.length,
+          valid: validRows.length,
+          invalid: list.filter((row) => !row.valid).length,
+          fallback: list.filter((row) => row.valid && row.typeFallback).length,
+        },
+      };
+    },
+
+    normalizeJsonPreviewRow(rawItem, rowNo) {
+      if (!rawItem || typeof rawItem !== 'object' || Array.isArray(rawItem)) {
+        return {
+          rowNo,
+          valid: false,
+          typeFallback: false,
+          name: '',
+          type: 'other',
+          valuation: null,
+          currency: 'KRW',
+          ticker: '',
+          market: '',
+          source: { name: '', type: 'other', valuation: '', currency: 'KRW', ticker: '', market: '' },
+          message: '객체 행만 지원합니다.',
+        };
+      }
+
+      const nameRaw = this.getValueByAliases(rawItem, ['name', 'asset_name', 'assetName', '자산명', '자산 이름']);
+      const typeRaw = this.getValueByAliases(rawItem, ['type', 'asset_type', 'assetType', '자산타입', '자산 타입']);
+      const valuationRaw = this.getValueByAliases(rawItem, ['valuation', 'value', 'asset_value', '평가금액', '평가 금액']);
+      const currencyRaw = this.getValueByAliases(rawItem, ['currency', '통화']);
+      const tickerRaw = this.getValueByAliases(rawItem, ['ticker', 'symbol', '티커', '종목코드']);
+      const marketRaw = this.getValueByAliases(rawItem, ['market', '거래소', '시장']);
+
+      const name = this.toStringValue(nameRaw) || '';
+      const typeInfo = this.normalizeJsonAssetType(typeRaw);
+      const valuation = this.toNumber(valuationRaw);
+      const currencyInfo = this.normalizeJsonCurrency(currencyRaw);
+      const ticker = this.toStringValue(tickerRaw) || '';
+      const market = this.toStringValue(marketRaw) || '';
+
+      const errors = [];
+      if (!name) errors.push('자산명이 없습니다.');
+      if (!this.toStringValue(typeRaw)) errors.push('자산 타입이 없습니다.');
+      if (valuation === null || valuation === 0) errors.push('평가금액은 0이 아닌 숫자여야 합니다.');
+      if (valuation !== null && typeInfo.type !== 'liability' && valuation < 0) errors.push('비부채 타입은 평가금액이 양수여야 합니다.');
+
+      const valid = errors.length === 0;
+      const message = errors.length
+        ? errors.join(', ')
+        : (typeInfo.fallback ? '타입 미일치로 other 처리' : '반영 가능');
+
+      return {
+        rowNo,
+        valid,
+        typeFallback: typeInfo.fallback,
+        name,
+        type: typeInfo.type,
+        valuation,
+        currency: currencyInfo.currency,
+        ticker,
+        market,
+        source: {
+          name,
+          type: typeInfo.type,
+          valuation: valuationRaw === null || valuationRaw === undefined ? '' : String(valuationRaw),
+          currency: currencyRaw ? String(currencyRaw) : 'KRW',
+          ticker,
+          market,
+        },
+        message,
+      };
+    },
+
+    updateJsonPreviewRow(rowNo, field, value) {
+      const rows = this.state.jsonPreviewRows.slice();
+      const index = rows.findIndex((row) => Number(row.rowNo) === Number(rowNo));
+      if (index < 0) return;
+
+      const current = rows[index];
+      const source = {
+        name: current.source?.name || '',
+        type: current.source?.type || 'other',
+        valuation: current.source?.valuation || '',
+        currency: current.source?.currency || 'KRW',
+        ticker: current.source?.ticker || '',
+        market: current.source?.market || '',
+      };
+      source[field] = value;
+      rows[index] = this.normalizeJsonPreviewRow(source, rowNo);
+
+      const computed = this.computeJsonPreviewState(rows);
+      this.state.jsonPreviewRows = rows;
+      this.state.jsonValidRows = computed.validRows;
+      this.state.jsonPreviewSummary = computed.summary;
+      this.state.jsonStatus = '';
+      this.state.jsonStatusType = 'info';
+      this.renderAssetsPage(document.getElementById('page-content'));
+    },
+
+    normalizeJsonAssetType(rawType) {
+      const raw = this.toStringValue(rawType);
+      if (!raw) return { type: 'other', fallback: true };
+      const normalized = this.normalizeAssetType(raw);
+      if (ASSET_TYPE_LABELS[normalized]) {
+        return { type: normalized, fallback: false };
+      }
+      return { type: 'other', fallback: true };
+    },
+
+    normalizeJsonCurrency(rawCurrency) {
+      const raw = this.toStringValue(rawCurrency);
+      if (!raw) return { currency: 'KRW' };
+      const upper = raw.toUpperCase();
+      if (CURRENCY_OPTIONS.includes(upper)) return { currency: upper };
+      return { currency: 'KRW' };
+    },
+
+    getValueByAliases(row, aliases) {
+      const entries = Object.entries(row || {});
+      for (const alias of aliases) {
+        const lowerAlias = String(alias).toLowerCase();
+        for (const [key, value] of entries) {
+          if (String(key).toLowerCase() !== lowerAlias) continue;
+          if (value === null || value === undefined) continue;
+          if (typeof value === 'string' && !value.trim()) continue;
+          return value;
+        }
+      }
+      return null;
+    },
+
+    renderTypeSelectOptions(selectedType) {
+      const selected = selectedType || 'other';
+      return Object.keys(ASSET_TYPE_LABELS)
+        .map((type) => `<option value="${this.escapeHtml(type)}" ${type === selected ? 'selected' : ''}>${this.escapeHtml(ASSET_TYPE_LABELS[type])}</option>`)
+        .join('');
+    },
+
+    renderCurrencySelectOptions(selectedCurrency) {
+      const selected = (selectedCurrency || 'KRW').toUpperCase();
+      return CURRENCY_OPTIONS.map((currency) => `<option value="${currency}" ${currency === selected ? 'selected' : ''}>${currency}</option>`).join('');
+    },
+
+    applyJsonRowsToAssets(rows) {
+      const list = this.state.assets.slice();
+      let created = 0;
+      let updated = 0;
+
+      for (const row of rows) {
+        const patch = this.mapJsonRowToAssetPatch(row);
+        const idx = this.findMatchingAssetIndex(list, patch);
+        if (idx >= 0) {
+          const current = list[idx];
+          const merged = {
+            ...current,
+            name: patch.name,
+            type: patch.type,
+            currency: patch.currency,
+            valueInput: patch.valueInput,
+            valuationDisplay: patch.valuationDisplay,
+            quantity: patch.quantity,
+            manualPrice: patch.manualPrice,
+            valuation: patch.valuation,
+          };
+          if (patch.ticker !== undefined) merged.ticker = patch.ticker;
+          if (patch.market !== undefined) merged.market = patch.market;
+          list[idx] = merged;
+          updated += 1;
+        } else {
+          list.push({
+            id: this.generateAssetId(patch),
+            name: patch.name,
+            type: patch.type,
+            currency: patch.currency,
+            valueInput: patch.valueInput,
+            valuationDisplay: patch.valuationDisplay,
+            quantity: patch.quantity,
+            manualPrice: patch.manualPrice,
+            owner: null,
+            ticker: patch.ticker || null,
+            market: patch.market || null,
+            avgCost: null,
+            bankName: null,
+            accountNumber: null,
+            valuation: patch.valuation,
+          });
+          created += 1;
+        }
+      }
+
+      list.forEach((asset) => {
+        asset.valuation = this.computeAssetValuation(asset);
+      });
+
+      this.state.assets = list;
+      this.state.dashboard = this.buildDashboard(list, null);
+      return { created, updated };
+    },
+
+    mapJsonRowToAssetPatch(row) {
+      const valuationRaw = Number(row.valuation || 0);
+      const valuation = row.type === 'liability' ? -Math.abs(valuationRaw) : valuationRaw;
+      return {
+        name: row.name,
+        type: row.type,
+        currency: row.currency || 'KRW',
+        valueInput: row.type === 'liability' ? Math.abs(valuation) : valuation,
+        valuationDisplay: valuation,
+        valuation,
+        quantity: null,
+        manualPrice: null,
+        ticker: this.toStringValue(row.ticker),
+        market: this.toStringValue(row.market),
+      };
+    },
+
+    findMatchingAssetIndex(list, patch) {
+      return list.findIndex((asset) => {
+        const sameName = (asset.name || '').trim() === (patch.name || '').trim();
+        const sameType = (asset.type || '') === (patch.type || '');
+        if (!sameName || !sameType) return false;
+
+        const existingTicker = (asset.ticker || '').trim().toUpperCase();
+        const patchTicker = (patch.ticker || '').trim().toUpperCase();
+        if (existingTicker === patchTicker) return true;
+        if (!patchTicker) return true;
+        if (!existingTicker && patchTicker) return true;
+        return false;
+      });
+    },
+
+    generateAssetId(patch) {
+      const base = `${patch.type || 'other'}_${patch.name || 'asset'}_${Date.now()}`;
+      return base.replace(/\s+/g, '_');
+    },
+
+    exportAssetsToExcel() {
+      if (!this.state.assets.length) {
+        this.state.message = '저장할 자산이 없습니다.';
+        this.state.messageType = 'error';
+        this.renderDataToolbar();
+        return;
+      }
+
+      const workbook = XLSX.utils.book_new();
+      const assetsRows = this.buildAssetsSheetRows(this.state.assets);
+      const dashboardRows = this.buildDashboardSheetRows(this.state.dashboard || this.buildDashboard(this.state.assets, null));
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(assetsRows), 'Assets');
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(dashboardRows), 'Dashboard');
+
+      const now = new Date();
+      const filename = `asset_monitoring_web_${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(
+        now.getDate()
+      ).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}${String(
+        now.getSeconds()
+      ).padStart(2, '0')}.xlsx`;
+
+      XLSX.writeFile(workbook, filename);
+      this.state.message = `엑셀 저장 완료: ${filename}`;
+      this.state.messageType = 'info';
+      this.renderDataToolbar();
+    },
+
+    buildAssetsSheetRows(assets) {
+      const headers = [
+        '자산ID',
+        '자산명',
+        '자산타입',
+        '통화',
+        '원금평가금액',
+        '평가금액KRW',
+        '금리연',
+        '만기일',
+        '소유자',
+        '티커',
+        '시장',
+        '수량',
+        '현재가1주당수동',
+        '평균단가',
+        '은행명',
+        '계좌번호',
+      ];
+
+      const rows = [headers];
+      assets.forEach((asset, index) => {
+        rows.push([
+          asset.id || `asset_${index + 1}`,
+          asset.name || '',
+          asset.type || 'other',
+          asset.currency || 'KRW',
+          asset.valueInput ?? '',
+          asset.valuation ?? '',
+          asset.interestRatePct ?? '',
+          asset.maturityDate || '',
+          asset.owner || '',
+          asset.ticker || '',
+          asset.market || '',
+          asset.quantity ?? '',
+          asset.manualPrice ?? '',
+          asset.avgCost ?? '',
+          asset.bankName || '',
+          asset.accountNumber || '',
+        ]);
+      });
+      return rows;
+    },
+
+    buildDashboardSheetRows(dashboard) {
+      const d = dashboard || { totalAssets: 0, totalLiabilities: 0, netWorth: 0, breakdown: {} };
+      const rows = [
+        ['Metric', 'Value'],
+        ['TotalAssets', d.totalAssets || 0],
+        ['TotalLiabilities', d.totalLiabilities || 0],
+        ['NetWorth', d.netWorth || 0],
+        [],
+        ['AssetType', 'Valuation', 'WeightPct'],
+      ];
+
+      const entries = Object.entries(d.breakdown || {}).sort((a, b) => Number(b[1] || 0) - Number(a[1] || 0));
+      const total = entries.reduce((sum, [, value]) => sum + Number(value || 0), 0);
+      entries.forEach(([type, value]) => {
+        const valuation = Number(value || 0);
+        const weightPct = total > 0 ? (valuation / total) * 100 : 0;
+        rows.push([type, valuation, Number(weightPct.toFixed(2))]);
+      });
+      return rows;
     },
 
     getFilteredAssets() {
@@ -530,6 +1415,7 @@
 
       const items = this.getBreakdownItems(breakdown);
       if (!items.length) return;
+      const percents = items.map((item) => item.percent);
 
       this.breakdownChart = new Chart(canvas, {
         type: 'pie',
@@ -547,6 +1433,22 @@
           maintainAspectRatio: false,
           plugins: {
             legend: { position: 'bottom' },
+            piePercentLabel: {
+              minPercent: 3,
+              fontSize: 14,
+              color: '#f8fafc',
+              strokeColor: 'rgba(15, 23, 42, 0.75)',
+              strokeWidth: 3,
+            },
+            tooltip: {
+              callbacks: {
+                label: (context) => {
+                  const value = Number(context.raw || 0);
+                  const percent = Number(percents[context.dataIndex] || 0);
+                  return `${context.label}: ${percent.toFixed(1)}% (${this.formatCurrency(value)})`;
+                },
+              },
+            },
           },
         },
       });
@@ -640,6 +1542,11 @@
           owner: this.toStringValue(this.getField(row, headerInfo.columnMap, 'owner')),
           ticker: this.toStringValue(this.getField(row, headerInfo.columnMap, 'ticker')),
           market: this.toStringValue(this.getField(row, headerInfo.columnMap, 'market')),
+          avgCost: this.toNumber(this.getField(row, headerInfo.columnMap, 'avg_cost')),
+          bankName: this.toStringValue(this.getField(row, headerInfo.columnMap, 'bank_name')),
+          accountNumber: this.toStringValue(this.getField(row, headerInfo.columnMap, 'account_number')),
+          interestRatePct: this.toNumber(this.getField(row, headerInfo.columnMap, 'interest_rate_pct')),
+          maturityDate: this.toStringValue(this.getField(row, headerInfo.columnMap, 'maturity_date')),
         };
 
         asset.valuation = this.computeAssetValuation(asset);
