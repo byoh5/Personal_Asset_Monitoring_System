@@ -339,6 +339,7 @@
             </div>
             <div class="file-loader-actions">
               <label for="excelFileInput" class="btn btn-primary">엑셀 파일 선택</label>
+              <button id="loadDemoBtn" type="button" class="btn btn-secondary">데모 데이터 불러오기</button>
               <input id="excelFileInput" type="file" accept=".xlsx,.xls" style="display:none;" />
               <button id="clearDataBtn" type="button" class="btn btn-secondary" ${this.state.assets.length ? '' : 'disabled'}>데이터 초기화</button>
             </div>
@@ -350,6 +351,13 @@
       const fileInput = document.getElementById('excelFileInput');
       if (fileInput) {
         fileInput.addEventListener('change', (event) => this.handleFileSelect(event));
+      }
+
+      const demoBtn = document.getElementById('loadDemoBtn');
+      if (demoBtn) {
+        demoBtn.addEventListener('click', () => {
+          this.loadDemoData();
+        });
       }
 
       const clearBtn = document.getElementById('clearDataBtn');
@@ -412,6 +420,208 @@
       this.clearDataSnapshot();
       this.renderDataToolbar();
       this.renderPage(this.currentPage);
+    },
+
+    loadDemoData() {
+      const assets = this.createDemoAssets();
+      assets.forEach((asset) => {
+        asset.valuation = this.computeAssetValuation(asset);
+      });
+
+      this.state.assets = assets;
+      this.state.dashboard = this.buildDashboard(assets, null);
+      this.state.filterText = '';
+      this.state.filterType = 'all';
+      this.resetJsonImporterState();
+      this.resetManualAssetDraft();
+      this.saveFileMeta({
+        name: 'DEMO_40s_single_person_profile',
+        size: 0,
+        loadedAt: new Date().toISOString(),
+      });
+      this.saveDataSnapshot();
+      this.state.message = `데모 데이터 로딩 완료 (${assets.length}건, 40대 초반 1인 예시)`;
+      this.state.messageType = 'info';
+      this.renderDataToolbar();
+      this.renderPage(this.currentPage);
+    },
+
+    createDemoAssets() {
+      const rows = [
+        {
+          name: '실거주 아파트(서울)',
+          type: 'real_estate',
+          currency: 'KRW',
+          valueInput: 520000000,
+          valuationDisplay: 520000000,
+          owner: '본인',
+          market: '서울',
+        },
+        {
+          name: '주택담보대출',
+          type: 'liability',
+          currency: 'KRW',
+          valueInput: 235000000,
+          valuationDisplay: -235000000,
+          owner: '본인',
+          bankName: '국민은행',
+          accountNumber: 'HOME-LOAN-001',
+          interestRatePct: 3.85,
+          maturityDate: '2052-06-30',
+        },
+        {
+          name: '비상금 통장',
+          type: 'cash',
+          currency: 'KRW',
+          valueInput: 12000000,
+          valuationDisplay: 12000000,
+          owner: '본인',
+          bankName: '토스뱅크',
+          accountNumber: 'CASH-001',
+        },
+        {
+          name: '정기예금(1년)',
+          type: 'deposit',
+          currency: 'KRW',
+          valueInput: 40000000,
+          valuationDisplay: 40000000,
+          owner: '본인',
+          bankName: '신한은행',
+          accountNumber: 'DEP-2410',
+          interestRatePct: 3.3,
+          maturityDate: '2027-01-15',
+        },
+        {
+          name: 'IRP 퇴직연금',
+          type: 'pension',
+          currency: 'KRW',
+          valueInput: 36500000,
+          valuationDisplay: 36500000,
+          owner: '본인',
+          bankName: '미래에셋증권',
+          accountNumber: 'IRP-001',
+        },
+        {
+          name: '연금저축펀드',
+          type: 'pension',
+          currency: 'KRW',
+          valueInput: 24500000,
+          valuationDisplay: 24500000,
+          owner: '본인',
+          bankName: '한국투자증권',
+          accountNumber: 'PENSION-001',
+        },
+        {
+          name: 'KODEX 200',
+          type: 'etf',
+          currency: 'KRW',
+          valueInput: 19125000,
+          valuationDisplay: null,
+          quantity: 450,
+          manualPrice: 42500,
+          owner: '본인',
+          ticker: '069500',
+          market: 'KRX',
+        },
+        {
+          name: 'SCHD',
+          type: 'etf',
+          currency: 'KRW',
+          valueInput: 31360000,
+          valuationDisplay: null,
+          quantity: 320,
+          manualPrice: 98000,
+          owner: '본인',
+          ticker: 'SCHD',
+          market: 'NYSE',
+        },
+        {
+          name: '삼성전자',
+          type: 'stock',
+          currency: 'KRW',
+          valueInput: 15960000,
+          valuationDisplay: null,
+          quantity: 210,
+          manualPrice: 76000,
+          owner: '본인',
+          ticker: '005930',
+          market: 'KRX',
+        },
+        {
+          name: 'TESLA',
+          type: 'stock',
+          currency: 'KRW',
+          valueInput: 5580000,
+          valuationDisplay: null,
+          quantity: 18,
+          manualPrice: 310000,
+          owner: '본인',
+          ticker: 'TSLA',
+          market: 'NASDAQ',
+        },
+        {
+          name: '비트코인',
+          type: 'crypto',
+          currency: 'KRW',
+          valueInput: 7800000,
+          valuationDisplay: null,
+          quantity: 0.06,
+          manualPrice: 130000000,
+          owner: '본인',
+          ticker: 'BTC',
+          market: 'UPBIT',
+        },
+        {
+          name: '실손보험 해지환급금',
+          type: 'insurance',
+          currency: 'KRW',
+          valueInput: 11000000,
+          valuationDisplay: 11000000,
+          owner: '본인',
+          bankName: '삼성생명',
+          accountNumber: 'INS-001',
+        },
+        {
+          name: '골드바',
+          type: 'gold',
+          currency: 'KRW',
+          valueInput: 5600000,
+          valuationDisplay: 5600000,
+          owner: '본인',
+        },
+        {
+          name: '여행적금',
+          type: 'deposit',
+          currency: 'KRW',
+          valueInput: 8000000,
+          valuationDisplay: 8000000,
+          owner: '본인',
+          bankName: '하나은행',
+          accountNumber: 'TRAVEL-2026',
+          interestRatePct: 3.8,
+          maturityDate: '2026-12-31',
+        },
+      ];
+
+      return rows.map((item, index) => ({
+        id: `demo_${String(index + 1).padStart(2, '0')}`,
+        name: item.name || `데모자산-${index + 1}`,
+        type: this.normalizeAssetType(item.type || 'other'),
+        currency: item.currency || 'KRW',
+        valueInput: this.toNumber(item.valueInput),
+        valuationDisplay: this.toNumber(item.valuationDisplay),
+        quantity: this.toNumber(item.quantity),
+        manualPrice: this.toNumber(item.manualPrice),
+        owner: this.toStringValue(item.owner),
+        ticker: this.toStringValue(item.ticker),
+        market: this.toStringValue(item.market),
+        avgCost: this.toNumber(item.avgCost),
+        bankName: this.toStringValue(item.bankName),
+        accountNumber: this.toStringValue(item.accountNumber),
+        interestRatePct: this.toNumber(item.interestRatePct),
+        maturityDate: this.toStringValue(item.maturityDate),
+        valuation: 0,
+      }));
     },
 
     createDefaultManualAssetDraft() {
