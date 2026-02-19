@@ -3,6 +3,7 @@
     theme: 'asset_monitoring-theme',
     lastFile: 'asset_monitoring-web-last-file-meta',
     snapshot: 'asset_monitoring-web-snapshot-v1',
+    analysisProfile: 'asset_monitoring-web-analysis-profile-v1',
   };
 
   const ASSET_TYPE_LABELS = {
@@ -143,6 +144,7 @@
   const App = {
     currentPage: 'dashboard',
     breakdownChart: null,
+    analysisAllocChart: null,
     state: {
       assets: [],
       dashboard: null,
@@ -173,17 +175,21 @@
         maturityDate: '',
       },
       manualAssetError: '',
+      analysisProfile: null,
+      analysisReport: null,
     },
 
     menuItems: [
       { id: 'dashboard', icon: '📊', label: '대시보드' },
       { id: 'assets', icon: '💼', label: '자산' },
+      { id: 'analysis', icon: '🧭', label: '자산 분석' },
     ],
 
     init() {
       ThemeManager.init();
       this.loadFileMeta();
       this.loadDataSnapshot();
+      this.loadAnalysisProfile();
       this.renderLayout();
       this.bindLayoutEvents();
       this.renderPage('dashboard');
@@ -256,6 +262,37 @@
         localStorage.removeItem(STORAGE.snapshot);
       } catch (error) {
         console.warn('Failed to clear snapshot:', error);
+      }
+    },
+
+    loadAnalysisProfile() {
+      try {
+        const raw = localStorage.getItem(STORAGE.analysisProfile);
+        if (!raw) {
+          this.state.analysisProfile = this.getDefaultAnalysisProfile();
+          return;
+        }
+        const parsed = JSON.parse(raw);
+        this.state.analysisProfile = {
+          ...this.getDefaultAnalysisProfile(),
+          ...(parsed && typeof parsed === 'object' ? parsed : {}),
+        };
+      } catch (error) {
+        console.warn('Failed to load analysis profile:', error);
+        this.state.analysisProfile = this.getDefaultAnalysisProfile();
+      }
+    },
+
+    saveAnalysisProfile(profile) {
+      const normalized = {
+        ...this.getDefaultAnalysisProfile(),
+        ...(profile && typeof profile === 'object' ? profile : {}),
+      };
+      this.state.analysisProfile = normalized;
+      try {
+        localStorage.setItem(STORAGE.analysisProfile, JSON.stringify(normalized));
+      } catch (error) {
+        console.warn('Failed to save analysis profile:', error);
       }
     },
 
@@ -387,6 +424,7 @@
         this.state.filterType = 'all';
         this.resetJsonImporterState();
         this.resetManualAssetDraft();
+        this.refreshAnalysisReportIfExists();
 
         this.saveFileMeta({
           name: file.name,
@@ -417,6 +455,7 @@
       this.state.filterType = 'all';
       this.resetJsonImporterState();
       this.resetManualAssetDraft();
+      this.state.analysisReport = null;
       this.clearDataSnapshot();
       this.renderDataToolbar();
       this.renderPage(this.currentPage);
@@ -434,6 +473,7 @@
       this.state.filterType = 'all';
       this.resetJsonImporterState();
       this.resetManualAssetDraft();
+      this.refreshAnalysisReportIfExists();
       this.saveFileMeta({
         name: 'DEMO_40s_single_person_profile',
         size: 0,
@@ -662,6 +702,9 @@
       if (page !== 'dashboard') {
         this.destroyBreakdownChart();
       }
+      if (page !== 'analysis') {
+        this.destroyAnalysisAllocChart();
+      }
 
       const content = document.getElementById('page-content');
       if (!content) return;
@@ -670,6 +713,8 @@
         this.renderDashboardPage(content);
       } else if (page === 'assets') {
         this.renderAssetsPage(content);
+      } else if (page === 'analysis') {
+        this.renderAnalysisPage(content);
       } else {
         content.innerHTML = '<div class="error-container"><p>페이지를 찾을 수 없습니다.</p></div>';
       }
@@ -783,6 +828,599 @@
       this.bindAssetFilterEvents();
       this.bindAssetCrudEvents();
       this.bindJsonImporterEvents();
+    },
+
+    getDefaultAnalysisProfile() {
+      return {
+        age_range: '40s',
+        household_size: 1,
+        dependents: 0,
+        income_type: 'fixed',
+        monthly_income: 6500000,
+        monthly_expense: 3500000,
+        risk_preference: 'moderate',
+        housing_status: 'owner',
+        retirement_age: 60,
+        goals: ['retirement', 'leisure'],
+      };
+    },
+
+    renderAnalysisPage(container) {
+      const profile = {
+        ...this.getDefaultAnalysisProfile(),
+        ...(this.state.analysisProfile || {}),
+      };
+      const goals = new Set(Array.isArray(profile.goals) ? profile.goals : []);
+
+      container.innerHTML = `
+        <div class="page-header">
+          <h1 class="page-title">자산 분석</h1>
+          <p class="page-subtitle">설문 기반으로 현재 자산구성과 목표 비중을 비교해 리포트를 생성합니다.</p>
+        </div>
+
+        <div class="chart-container">
+          <h3>분석 설문</h3>
+          <div class="form-hint">프로필 저장 후 리포트를 생성하면 현재 자산 데이터 기준으로 분석 결과가 계산됩니다.</div>
+          <div class="asset-manual-grid" style="margin-top:12px;">
+            <div>
+              <label class="form-label" for="analysisAgeRange">연령대</label>
+              <select id="analysisAgeRange" class="form-select">
+                <option value="20s" ${profile.age_range === '20s' ? 'selected' : ''}>20대</option>
+                <option value="30s" ${profile.age_range === '30s' ? 'selected' : ''}>30대</option>
+                <option value="40s" ${profile.age_range === '40s' ? 'selected' : ''}>40대</option>
+                <option value="50s" ${profile.age_range === '50s' ? 'selected' : ''}>50대</option>
+                <option value="60s" ${profile.age_range === '60s' ? 'selected' : ''}>60대 이상</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label" for="analysisHouseholdSize">가구원 수</label>
+              <input id="analysisHouseholdSize" class="form-input" type="number" min="1" step="1" value="${this.escapeHtml(String(profile.household_size || 1))}" />
+            </div>
+            <div>
+              <label class="form-label" for="analysisDependents">부양가족 수</label>
+              <input id="analysisDependents" class="form-input" type="number" min="0" step="1" value="${this.escapeHtml(String(profile.dependents || 0))}" />
+            </div>
+            <div>
+              <label class="form-label" for="analysisIncomeType">소득 안정성</label>
+              <select id="analysisIncomeType" class="form-select">
+                <option value="fixed" ${profile.income_type === 'fixed' ? 'selected' : ''}>고정소득형</option>
+                <option value="mixed" ${profile.income_type === 'mixed' ? 'selected' : ''}>혼합형</option>
+                <option value="variable" ${profile.income_type === 'variable' ? 'selected' : ''}>변동소득형</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label" for="analysisMonthlyIncome">월 소득</label>
+              <div class="analysis-input">
+                <input id="analysisMonthlyIncome" class="form-input" type="number" min="0" step="10000" value="${this.escapeHtml(String(profile.monthly_income || ''))}" />
+                <div class="form-hint" id="analysisMonthlyIncomeWords"></div>
+              </div>
+            </div>
+            <div>
+              <label class="form-label" for="analysisMonthlyExpense">월 지출</label>
+              <div class="analysis-input">
+                <input id="analysisMonthlyExpense" class="form-input" type="number" min="0" step="10000" value="${this.escapeHtml(String(profile.monthly_expense || ''))}" />
+                <div class="form-hint" id="analysisMonthlyExpenseWords"></div>
+              </div>
+            </div>
+            <div>
+              <label class="form-label" for="analysisRiskPreference">투자 성향</label>
+              <select id="analysisRiskPreference" class="form-select">
+                <option value="conservative" ${profile.risk_preference === 'conservative' ? 'selected' : ''}>안정형</option>
+                <option value="moderate" ${profile.risk_preference === 'moderate' ? 'selected' : ''}>중립형</option>
+                <option value="aggressive" ${profile.risk_preference === 'aggressive' ? 'selected' : ''}>공격형</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label" for="analysisHousingStatus">주거 형태</label>
+              <select id="analysisHousingStatus" class="form-select">
+                <option value="owner" ${profile.housing_status === 'owner' ? 'selected' : ''}>자가</option>
+                <option value="rent" ${profile.housing_status === 'rent' ? 'selected' : ''}>임차</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label" for="analysisRetirementAge">은퇴 목표 나이</label>
+              <input id="analysisRetirementAge" class="form-input" type="number" min="45" max="80" step="1" value="${this.escapeHtml(String(profile.retirement_age || 60))}" />
+            </div>
+          </div>
+
+          <div class="form-group" style="margin-top:14px; margin-bottom:8px;">
+            <label class="form-label">재무 목표</label>
+            <div style="display:flex; gap:12px; flex-wrap:wrap;">
+              ${this.renderAnalysisGoalCheckbox('home_purchase', '주택마련', goals.has('home_purchase'))}
+              ${this.renderAnalysisGoalCheckbox('retirement', '은퇴준비', goals.has('retirement'))}
+              ${this.renderAnalysisGoalCheckbox('education', '교육비', goals.has('education'))}
+              ${this.renderAnalysisGoalCheckbox('leisure', '여가/여행', goals.has('leisure'))}
+            </div>
+          </div>
+
+          <div class="form-row" style="gap:12px; align-items:center; margin-top:12px;">
+            <button id="analysisSave" type="button" class="btn btn-primary">프로필 저장</button>
+            <button id="analysisGenerate" type="button" class="btn btn-secondary">리포트 생성</button>
+            <span id="analysisStatus" style="color: var(--text-secondary); font-size:13px;"></span>
+          </div>
+        </div>
+
+        <div id="analysisReport" class="chart-container" style="${this.state.analysisReport ? '' : 'display:none;'}">
+          <h3>자산 분석 리포트</h3>
+          <div id="analysisReportContent"></div>
+        </div>
+      `;
+
+      this.bindAnalysisEvents();
+      this.bindAnalysisAmountHints();
+      if (this.state.analysisReport) {
+        this.renderAnalysisReport(this.state.analysisReport);
+      }
+    },
+
+    renderAnalysisGoalCheckbox(value, label, checked) {
+      return `
+        <label style="display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" class="analysis-goal" value="${this.escapeHtml(value)}" ${checked ? 'checked' : ''} />
+          <span>${this.escapeHtml(label)}</span>
+        </label>
+      `;
+    },
+
+    bindAnalysisEvents() {
+      const saveBtn = document.getElementById('analysisSave');
+      const generateBtn = document.getElementById('analysisGenerate');
+
+      if (saveBtn) {
+        saveBtn.addEventListener('click', () => {
+          const answers = this.gatherAnalysisAnswers();
+          this.saveAnalysisProfile(answers);
+          this.setAnalysisStatus('프로필 저장 완료', 'success');
+        });
+      }
+
+      if (generateBtn) {
+        generateBtn.addEventListener('click', () => {
+          if (!this.state.assets.length) {
+            this.setAnalysisStatus('분석할 자산 데이터가 없습니다. 데모 데이터 또는 엑셀을 먼저 불러오세요.', 'error');
+            return;
+          }
+          const answers = this.gatherAnalysisAnswers();
+          this.saveAnalysisProfile(answers);
+          this.state.analysisReport = this.generateAnalysisReport(answers);
+          this.renderAnalysisReport(this.state.analysisReport);
+          this.setAnalysisStatus('리포트 생성 완료', 'success');
+        });
+      }
+    },
+
+    gatherAnalysisAnswers() {
+      const goals = Array.from(document.querySelectorAll('.analysis-goal'))
+        .filter((box) => box.checked)
+        .map((box) => box.value);
+
+      return {
+        age_range: document.getElementById('analysisAgeRange')?.value || '40s',
+        household_size: Math.max(1, parseInt(document.getElementById('analysisHouseholdSize')?.value || '1', 10) || 1),
+        dependents: Math.max(0, parseInt(document.getElementById('analysisDependents')?.value || '0', 10) || 0),
+        income_type: document.getElementById('analysisIncomeType')?.value || 'fixed',
+        monthly_income: Math.max(0, this.toNumber(document.getElementById('analysisMonthlyIncome')?.value) || 0),
+        monthly_expense: Math.max(0, this.toNumber(document.getElementById('analysisMonthlyExpense')?.value) || 0),
+        risk_preference: document.getElementById('analysisRiskPreference')?.value || 'moderate',
+        housing_status: document.getElementById('analysisHousingStatus')?.value || 'owner',
+        retirement_age: Math.max(45, parseInt(document.getElementById('analysisRetirementAge')?.value || '60', 10) || 60),
+        goals,
+      };
+    },
+
+    setAnalysisStatus(text, type = 'info') {
+      const statusEl = document.getElementById('analysisStatus');
+      if (!statusEl) return;
+      statusEl.textContent = text || '';
+      if (type === 'error') {
+        statusEl.style.color = 'var(--accent-red)';
+      } else if (type === 'success') {
+        statusEl.style.color = 'var(--accent-green)';
+      } else {
+        statusEl.style.color = 'var(--text-secondary)';
+      }
+    },
+
+    bindAnalysisAmountHints() {
+      const bind = (inputId, outId) => {
+        const inputEl = document.getElementById(inputId);
+        const outEl = document.getElementById(outId);
+        if (!inputEl || !outEl) return;
+
+        const render = () => {
+          const num = this.toNumber(inputEl.value);
+          outEl.textContent = num === null ? '' : this.formatKoreanAmountWords(num);
+        };
+        inputEl.addEventListener('input', render);
+        render();
+      };
+
+      bind('analysisMonthlyIncome', 'analysisMonthlyIncomeWords');
+      bind('analysisMonthlyExpense', 'analysisMonthlyExpenseWords');
+    },
+
+    refreshAnalysisReportIfExists() {
+      if (!this.state.analysisReport) return;
+      const answers = this.state.analysisProfile || this.getDefaultAnalysisProfile();
+      this.state.analysisReport = this.generateAnalysisReport(answers);
+      if (this.currentPage === 'analysis') {
+        this.renderAnalysisReport(this.state.analysisReport);
+      }
+    },
+
+    generateAnalysisReport(answers) {
+      return this.buildAnalysisReport(answers || this.state.analysisProfile || this.getDefaultAnalysisProfile());
+    },
+
+    buildAnalysisReport(answers) {
+      const metrics = this.computeAnalysisMetrics(this.state.assets, answers);
+      const allocation = this.computeAnalysisAllocation(this.state.assets, answers);
+      const recommendations = this.buildAnalysisRecommendations(metrics, allocation, answers);
+      const insights = this.buildAnalysisInsights(metrics, answers);
+      const summary = this.buildAnalysisSummary(metrics, allocation, answers);
+
+      return {
+        metrics,
+        allocation,
+        recommendations,
+        insights,
+        summary,
+      };
+    },
+
+    computeAnalysisMetrics(assets, answers) {
+      const list = Array.isArray(assets) ? assets : [];
+      let totalAssets = 0;
+      let totalLiabilities = 0;
+      let liquidityAmount = 0;
+
+      list.forEach((asset) => {
+        const valuation = Number(asset.valuation || 0);
+        if (!Number.isFinite(valuation) || valuation === 0) return;
+        if (valuation > 0) {
+          totalAssets += valuation;
+          if (this.getAnalysisBucket(asset.type) === 'liquidity') {
+            liquidityAmount += valuation;
+          }
+        } else {
+          totalLiabilities += Math.abs(valuation);
+        }
+      });
+
+      const income = Math.max(0, Number(answers.monthly_income || 0));
+      const expense = Math.max(0, Number(answers.monthly_expense || 0));
+      const monthlySurplus = income - expense;
+      const savingsRate = income > 0 ? (monthlySurplus / income) * 100 : 0;
+      const emergencyTargetMonths = { fixed: 6, mixed: 7, variable: 9 }[answers.income_type] || 6;
+      const emergencyTarget = expense * emergencyTargetMonths;
+      const emergencyMonths = expense > 0 ? liquidityAmount / expense : 0;
+      const emergencyGap = Math.max(emergencyTarget - liquidityAmount, 0);
+      const debtRatio = totalAssets > 0 ? (totalLiabilities / totalAssets) * 100 : 0;
+
+      return {
+        total_assets: totalAssets,
+        total_liabilities: totalLiabilities,
+        net_worth: totalAssets - totalLiabilities,
+        liquidity_amount: liquidityAmount,
+        emergency_target_months: emergencyTargetMonths,
+        emergency_months: Number(emergencyMonths.toFixed(1)),
+        emergency_gap: emergencyGap,
+        savings_rate: Number(savingsRate.toFixed(1)),
+        debt_ratio: Number(debtRatio.toFixed(1)),
+        monthly_surplus: monthlySurplus,
+      };
+    },
+
+    computeAnalysisAllocation(assets, answers) {
+      const list = Array.isArray(assets) ? assets : [];
+      const amount = { liquidity: 0, equity: 0, real_estate: 0, gold: 0 };
+      let total = 0;
+
+      list.forEach((asset) => {
+        const valuation = Number(asset.valuation || 0);
+        if (!Number.isFinite(valuation) || valuation <= 0) return;
+        total += valuation;
+        const bucket = this.getAnalysisBucket(asset.type);
+        amount[bucket] = (amount[bucket] || 0) + valuation;
+      });
+
+      const current = {
+        liquidity: total > 0 ? (amount.liquidity / total) * 100 : 0,
+        equity: total > 0 ? (amount.equity / total) * 100 : 0,
+        real_estate: total > 0 ? (amount.real_estate / total) * 100 : 0,
+        gold: total > 0 ? (amount.gold / total) * 100 : 0,
+      };
+
+      const target = this.buildAnalysisTargetAllocation(answers);
+      return {
+        current: this.normalizeAllocationPercent(current),
+        target: this.normalizeAllocationPercent(target),
+      };
+    },
+
+    buildAnalysisTargetAllocation(answers) {
+      const risk = answers.risk_preference || 'moderate';
+      const baseByRisk = {
+        conservative: { liquidity: 40, equity: 20, real_estate: 35, gold: 5 },
+        moderate: { liquidity: 25, equity: 45, real_estate: 25, gold: 5 },
+        aggressive: { liquidity: 15, equity: 60, real_estate: 20, gold: 5 },
+      };
+      const target = { ...(baseByRisk[risk] || baseByRisk.moderate) };
+
+      const age = this.getAgeFromRange(answers.age_range);
+      const goals = new Set(Array.isArray(answers.goals) ? answers.goals : []);
+
+      if (age < 35) {
+        target.equity += 5;
+        target.liquidity -= 5;
+      } else if (age >= 60) {
+        target.liquidity += 10;
+        target.equity -= 10;
+      } else if (age >= 50) {
+        target.liquidity += 5;
+        target.equity -= 5;
+      }
+
+      if (answers.housing_status === 'rent') {
+        target.liquidity += 5;
+        target.real_estate -= 5;
+      }
+
+      if (goals.has('home_purchase') && answers.housing_status === 'rent') {
+        target.real_estate += 5;
+        target.equity -= 5;
+      }
+
+      if (goals.has('retirement') && age <= 45) {
+        target.equity += 5;
+        target.liquidity -= 3;
+        target.real_estate -= 2;
+      }
+
+      return target;
+    },
+
+    normalizeAllocationPercent(raw) {
+      const keys = ['liquidity', 'equity', 'real_estate', 'gold'];
+      const clamped = {};
+      keys.forEach((key) => {
+        clamped[key] = Math.max(0, Number(raw[key] || 0));
+      });
+
+      const sum = keys.reduce((acc, key) => acc + clamped[key], 0);
+      if (sum <= 0) {
+        return { liquidity: 25, equity: 45, real_estate: 25, gold: 5 };
+      }
+
+      const normalized = {};
+      keys.forEach((key) => {
+        normalized[key] = Number(((clamped[key] / sum) * 100).toFixed(1));
+      });
+
+      const fixedSum = keys.reduce((acc, key) => acc + normalized[key], 0);
+      const diff = Number((100 - fixedSum).toFixed(1));
+      if (Math.abs(diff) >= 0.1) {
+        const maxKey = keys.reduce((best, key) => (normalized[key] > normalized[best] ? key : best), keys[0]);
+        normalized[maxKey] = Number((normalized[maxKey] + diff).toFixed(1));
+      }
+      return normalized;
+    },
+
+    buildAnalysisSummary(metrics, allocation, answers) {
+      const ageLabelMap = { '20s': '20대', '30s': '30대', '40s': '40대', '50s': '50대', '60s': '60대 이상' };
+      const ageLabel = ageLabelMap[answers.age_range] || '기타';
+      return `${ageLabel} ${answers.household_size || 1}인 가구 기준으로, 현재 순자산은 ${this.formatCurrency(
+        metrics.net_worth
+      )}이며 비상자금은 ${metrics.emergency_months}개월치입니다. 투자성향(${answers.risk_preference}) 대비 현재 자산배분의 차이를 기준으로 우선 조정 항목을 제시합니다.`;
+    },
+
+    buildAnalysisInsights(metrics, answers) {
+      const list = [];
+      list.push(`총자산 ${this.formatCurrency(metrics.total_assets)} / 총부채 ${this.formatCurrency(metrics.total_liabilities)} / 순자산 ${this.formatCurrency(metrics.net_worth)}`);
+      list.push(`월 잉여자금 ${this.formatCurrency(metrics.monthly_surplus)} (저축률 ${metrics.savings_rate}%)`);
+      list.push(`비상자금 ${metrics.emergency_months}개월치 보유 (목표 ${metrics.emergency_target_months}개월)`);
+      list.push(`부채비율 ${metrics.debt_ratio}%`);
+
+      const currentAge = this.getAgeFromRange(answers.age_range);
+      const retirementAge = Math.max(currentAge, Number(answers.retirement_age || currentAge));
+      list.push(`은퇴 목표까지 약 ${Math.max(0, retirementAge - currentAge)}년`);
+      return list;
+    },
+
+    buildAnalysisRecommendations(metrics, allocation, answers) {
+      const rec = [];
+
+      if (metrics.emergency_gap > 0) {
+        rec.push(`비상자금이 목표 대비 ${this.formatCurrency(metrics.emergency_gap)} 부족합니다. 현금/예금 비중을 우선 보강하세요.`);
+      }
+      if (metrics.savings_rate < 15) {
+        rec.push('저축률이 15% 미만입니다. 고정지출 점검 또는 자동이체 저축액 증액을 검토하세요.');
+      }
+      if (metrics.debt_ratio > 60) {
+        rec.push('부채비율이 높은 편입니다. 고금리 부채 상환 우선순위를 설정하세요.');
+      }
+
+      const labels = {
+        liquidity: '현금성 자산',
+        equity: '주식/펀드성 자산',
+        real_estate: '부동산 자산',
+        gold: '금 자산',
+      };
+      ['liquidity', 'equity', 'real_estate', 'gold'].forEach((key) => {
+        const gap = (allocation.target[key] || 0) - (allocation.current[key] || 0);
+        if (gap >= 8) rec.push(`${labels[key]} 비중을 약 ${gap.toFixed(1)}%p 확대하는 것이 목표 배분에 유리합니다.`);
+        if (gap <= -8) rec.push(`${labels[key]} 비중이 목표 대비 ${Math.abs(gap).toFixed(1)}%p 높습니다. 일부 리밸런싱을 고려하세요.`);
+      });
+
+      if ((answers.goals || []).includes('retirement') && this.getAgeFromRange(answers.age_range) <= 45) {
+        rec.push('은퇴준비 목표가 있어 장기 투자성 자산(ETF/연금) 비중을 점진적으로 늘리는 전략이 적합합니다.');
+      }
+
+      if (!rec.length) rec.push('현재 자산구성이 프로필 목표와 유사합니다. 분기 단위 점검만 유지하세요.');
+      return rec;
+    },
+
+    getAnalysisBucket(type) {
+      const normalized = this.normalizeAssetType(type || 'other');
+      if (['cash', 'deposit', 'insurance', 'other'].includes(normalized)) return 'liquidity';
+      if (['stock', 'etf', 'crypto', 'bond', 'fund', 'pension'].includes(normalized)) return 'equity';
+      if (normalized === 'real_estate') return 'real_estate';
+      if (normalized === 'gold') return 'gold';
+      return 'liquidity';
+    },
+
+    renderAnalysisReport(report) {
+      const wrapper = document.getElementById('analysisReport');
+      const content = document.getElementById('analysisReportContent');
+      if (!wrapper || !content || !report) return;
+      const { metrics, allocation, recommendations, summary, insights } = report;
+      wrapper.style.display = 'block';
+
+      content.innerHTML = `
+        <div class="form-row" style="gap:16px; flex-wrap:wrap;">
+          <div class="chart-container" style="min-width:220px; flex:1;">
+            <h4>총자산</h4>
+            <div style="font-size:22px; font-weight:700;">${this.formatCurrency(metrics.total_assets)}</div>
+          </div>
+          <div class="chart-container" style="min-width:220px; flex:1;">
+            <h4>비상자금</h4>
+            <div style="font-size:18px;">${metrics.emergency_months}개월 / 목표 ${metrics.emergency_target_months}개월</div>
+            ${metrics.emergency_gap > 0 ? `<div style="color: var(--text-secondary); font-size:13px;">부족액 ${this.formatCurrency(metrics.emergency_gap)}</div>` : ''}
+          </div>
+          <div class="chart-container" style="min-width:220px; flex:1;">
+            <h4>저축률</h4>
+            <div style="font-size:22px; font-weight:700;">${metrics.savings_rate}%</div>
+          </div>
+        </div>
+
+        <div class="chart-container" style="margin-top:16px;">
+          <h4>분석 요약</h4>
+          <p style="color: var(--text-secondary); margin-top:6px;">${this.escapeHtml(summary || '')}</p>
+          ${insights && insights.length ? `
+            <ul style="margin-top:8px;">
+              ${insights.map((item) => `<li>${this.escapeHtml(item)}</li>`).join('')}
+            </ul>
+          ` : ''}
+        </div>
+
+        <div class="form-row" style="gap:16px; flex-wrap:wrap; margin-top:16px;">
+          ${this.renderAnalysisAllocationCard('liquidity', allocation)}
+          ${this.renderAnalysisAllocationCard('equity', allocation)}
+          ${this.renderAnalysisAllocationCard('real_estate', allocation)}
+          ${this.renderAnalysisAllocationCard('gold', allocation)}
+        </div>
+
+        <div class="chart-container" style="margin-top:16px;">
+          <h4>자산배분 비교 차트 (현재 vs 목표)</h4>
+          <canvas id="analysisAllocChart" height="160"></canvas>
+        </div>
+
+        <div style="margin-top:16px;">
+          <h4>추천 액션</h4>
+          <ul>
+            ${recommendations.map((item) => `<li>${this.escapeHtml(item)}</li>`).join('')}
+          </ul>
+        </div>
+      `;
+
+      this.renderAnalysisAllocationChart(allocation);
+    },
+
+    renderAnalysisAllocationCard(key, allocation) {
+      const labels = {
+        liquidity: '현금성',
+        equity: '투자성',
+        real_estate: '부동산',
+        gold: '금',
+      };
+      const current = Number((allocation.current[key] || 0).toFixed(1));
+      const target = Number((allocation.target[key] || 0).toFixed(1));
+
+      return `
+        <div class="chart-container" style="min-width:220px; flex:1;">
+          <h4>${labels[key]}</h4>
+          <div style="font-size:13px; color: var(--text-secondary);">현재 ${current}% · 목표 ${target}%</div>
+          <div style="margin-top:8px;">
+            <div style="height:8px; background: var(--border-color); border-radius:4px; overflow:hidden;">
+              <div style="width:${current}%; height:8px; background: var(--accent-blue);"></div>
+            </div>
+            <div style="height:6px;"></div>
+            <div style="height:8px; background: var(--border-color); border-radius:4px; overflow:hidden;">
+              <div style="width:${target}%; height:8px; background: var(--accent-green);"></div>
+            </div>
+          </div>
+        </div>
+      `;
+    },
+
+    renderAnalysisAllocationChart(allocation) {
+      const canvas = document.getElementById('analysisAllocChart');
+      if (!canvas || typeof Chart === 'undefined') return;
+      const ctx = canvas.getContext('2d');
+
+      this.destroyAnalysisAllocChart();
+
+      this.analysisAllocChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: ['현금성', '투자성', '부동산', '금'],
+          datasets: [
+            {
+              label: '현재',
+              data: [
+                allocation.current.liquidity || 0,
+                allocation.current.equity || 0,
+                allocation.current.real_estate || 0,
+                allocation.current.gold || 0,
+              ],
+              backgroundColor: 'rgba(59, 130, 246, 0.6)',
+            },
+            {
+              label: '목표',
+              data: [
+                allocation.target.liquidity || 0,
+                allocation.target.equity || 0,
+                allocation.target.real_estate || 0,
+                allocation.target.gold || 0,
+              ],
+              backgroundColor: 'rgba(16, 185, 129, 0.6)',
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          scales: {
+            y: {
+              beginAtZero: true,
+              max: 100,
+              ticks: {
+                callback: (value) => `${value}%`,
+              },
+            },
+          },
+          plugins: {
+            legend: { position: 'bottom' },
+          },
+        },
+      });
+    },
+
+    destroyAnalysisAllocChart() {
+      if (!this.analysisAllocChart) return;
+      this.analysisAllocChart.destroy();
+      this.analysisAllocChart = null;
+    },
+
+    getAgeFromRange(ageRange) {
+      const map = {
+        '20s': 25,
+        '30s': 35,
+        '40s': 43,
+        '50s': 53,
+        '60s': 62,
+      };
+      return map[ageRange] || 43;
     },
 
     bindAssetFilterEvents() {
@@ -1044,6 +1682,7 @@
       asset.valuation = this.computeAssetValuation(asset);
       this.state.assets = [...this.state.assets, asset];
       this.state.dashboard = this.buildDashboard(this.state.assets, null);
+      this.refreshAnalysisReportIfExists();
       this.saveDataSnapshot();
       this.state.message = useDerivedValuation
         ? `자산 추가 완료: ${asset.name} (수량×현재가로 평가금액 자동 계산)`
@@ -1063,6 +1702,7 @@
       this.state.assets.splice(index, 1);
       this.state.assets = this.state.assets.slice();
       this.state.dashboard = this.buildDashboard(this.state.assets, null);
+      this.refreshAnalysisReportIfExists();
       this.saveDataSnapshot();
       this.state.message = `자산 삭제 완료: ${target?.name || '-'}`;
       this.state.messageType = 'info';
@@ -1598,6 +2238,7 @@
 
       this.state.assets = list;
       this.state.dashboard = this.buildDashboard(list, null);
+      this.refreshAnalysisReportIfExists();
       this.saveDataSnapshot();
       return { created, updated };
     },
@@ -2214,6 +2855,25 @@
       if (!str) return null;
       const num = Number(str);
       return Number.isFinite(num) ? num : null;
+    },
+
+    formatKoreanAmountWords(value) {
+      const units = ['', '만', '억', '조', '경'];
+      const num = Math.floor(Math.abs(Number(value || 0)));
+      if (!num) return '';
+
+      let result = '';
+      let current = num;
+      let unitIndex = 0;
+      while (current > 0 && unitIndex < units.length) {
+        const chunk = current % 10000;
+        if (chunk) {
+          result = `${chunk.toLocaleString('ko-KR')}${units[unitIndex]}${result ? ` ${result}` : ''}`;
+        }
+        current = Math.floor(current / 10000);
+        unitIndex += 1;
+      }
+      return `${result}원`;
     },
 
     formatCurrency(value, currency = 'KRW') {
