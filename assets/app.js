@@ -838,6 +838,7 @@
 
       this.bindAssetFilterEvents();
       this.bindAssetCrudEvents();
+      this.bindManualAmountHints();
       this.bindJsonImporterEvents();
     },
 
@@ -1013,9 +1014,8 @@
 
             <h2>3. 입력 규칙 (자주 발생하는 오류)</h2>
             <ul>
-              <li>JSON 문자열 따옴표는 스마트 따옴표(<code>“ ”</code>)가 아닌 직선 따옴표(<code>"</code>)를 사용해야 합니다.</li>
               <li><code>valuation</code>은 <strong>평가금액</strong>이며 <strong>평가손익</strong> 값이 아닙니다.</li>
-              <li>부채(<code>liability</code>)를 제외한 자산은 평가금액을 양수로 입력합니다.</li>
+              <li>평가금액은 양수 입력 기준이며, 부채(<code>liability</code>)는 저장 시 자동으로 음수 변환됩니다.</li>
             </ul>
 
             <h2>4. 보안/개인정보</h2>
@@ -1239,6 +1239,34 @@
 
       bind('analysisMonthlyIncome', 'analysisMonthlyIncomeWords');
       bind('analysisMonthlyExpense', 'analysisMonthlyExpenseWords');
+    },
+
+    bindManualAmountHints() {
+      const valuationInput = document.getElementById('manualAssetValuation');
+      const valuationWords = document.getElementById('manualAssetValuationWords');
+      const typeSelect = document.getElementById('manualAssetType');
+      if (!valuationInput || !valuationWords || !typeSelect) return;
+
+      const render = () => {
+        const num = this.toNumber(valuationInput.value);
+        if (num === null) {
+          valuationWords.textContent = '';
+          return;
+        }
+
+        const words = this.formatKoreanAmountWords(num);
+        if (!words) {
+          valuationWords.textContent = '';
+          return;
+        }
+
+        const type = this.normalizeAssetType(typeSelect.value || 'other');
+        valuationWords.textContent = type === 'liability' ? `${words} (부채는 저장 시 음수 변환)` : words;
+      };
+
+      valuationInput.addEventListener('input', render);
+      typeSelect.addEventListener('change', render);
+      render();
     },
 
     refreshAnalysisReportIfExists() {
@@ -1687,9 +1715,12 @@
             </div>
             <div>
               <label class="form-label" for="manualAssetValuation">평가금액 *</label>
-              <input id="manualAssetValuation" class="form-input" data-manual-field="valuation" type="number" step="any" value="${this.escapeHtml(
-                draft.valuation || ''
-              )}" placeholder="예: 1000000" />
+              <div class="analysis-input">
+                <input id="manualAssetValuation" class="form-input" data-manual-field="valuation" type="number" step="any" value="${this.escapeHtml(
+                  draft.valuation || ''
+                )}" placeholder="예: 1000000" />
+                <div class="form-hint" id="manualAssetValuationWords"></div>
+              </div>
             </div>
             <div>
               <label class="form-label" for="manualAssetCurrency">통화</label>
@@ -1779,13 +1810,16 @@
       if (MARKET_OPTION_TYPES.includes(type)) {
         return '필수값은 자산명/자산타입/평가금액입니다. 수량과 현재가를 같이 입력하면 평가금액이 비어있을 때 자동 계산됩니다.';
       }
+      if (type === 'liability') {
+        return '필수값은 자산명/자산타입/평가금액입니다. 부채는 평가금액을 양수로 입력하면 저장 시 자동으로 음수 변환되며, 기관명/계좌번호/금리/만기일 옵션을 입력할 수 있습니다.';
+      }
       if (BANK_OPTION_TYPES.includes(type)) {
-        return '필수값은 자산명/자산타입/평가금액입니다. 예금/보험/연금/부채는 기관명, 계좌번호, 금리, 만기일 옵션을 입력할 수 있습니다.';
+        return '필수값은 자산명/자산타입/평가금액입니다. 예금/보험/연금은 기관명, 계좌번호, 금리, 만기일 옵션을 입력할 수 있습니다.';
       }
       if (type === 'real_estate') {
         return '필수값은 자산명/자산타입/평가금액입니다. 부동산은 지역/시장 정보를 옵션으로 기록할 수 있습니다.';
       }
-      return '필수값은 자산명/자산타입/평가금액이며, 부채 타입은 음수로 저장됩니다.';
+      return '필수값은 자산명/자산타입/평가금액입니다.';
     },
 
     bindAssetCrudEvents() {
@@ -2164,7 +2198,8 @@
         '- Required: name, type, valuation',
         '- valuation means current total asset value, NOT profit/loss',
         '- If type is unknown, set type to "other"',
-        '- For non-liability types, valuation must be > 0',
+        '- valuation should be a positive number (> 0)',
+        '- If type is liability, still output positive amount (the app converts it to negative internally)',
         '- Return pure JSON only (no markdown or explanation)',
       ].join('\n');
     },
