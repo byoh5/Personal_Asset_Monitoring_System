@@ -1059,6 +1059,11 @@ body {
     height: 280px;
 }
 
+.chart-canvas--analysis-allocation {
+    height: 260px;
+    margin-top: 8px;
+}
+
 .breakdown-legend {
     margin-top: 16px;
 }
@@ -1115,6 +1120,10 @@ body {
 
 @media (max-width: 768px) {
     .chart-canvas--breakdown {
+        height: 220px;
+    }
+
+    .chart-canvas--analysis-allocation {
         height: 220px;
     }
 }

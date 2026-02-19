@@ -62,6 +62,8 @@
   const PiePercentLabelPlugin = {
     id: 'piePercentLabel',
     afterDatasetsDraw(chart, _args, pluginOptions) {
+      const chartType = String(chart?.config?.type || '').toLowerCase();
+      if (!['pie', 'doughnut'].includes(chartType)) return;
       if (!chart || !chart.data || !Array.isArray(chart.data.datasets) || !chart.data.datasets.length) return;
 
       const dataset = chart.data.datasets[0];
@@ -1275,6 +1277,7 @@
       if (!wrapper || !content || !report) return;
       const { metrics, allocation, recommendations, summary, insights } = report;
       wrapper.style.display = 'block';
+      this.destroyAnalysisAllocChart();
 
       content.innerHTML = `
         <div class="form-row" style="gap:16px; flex-wrap:wrap;">
@@ -1312,7 +1315,9 @@
 
         <div class="chart-container" style="margin-top:16px;">
           <h4>자산배분 비교 차트 (현재 vs 목표)</h4>
-          <canvas id="analysisAllocChart" height="160"></canvas>
+          <div class="chart-canvas chart-canvas--analysis-allocation">
+            <canvas id="analysisAllocChart"></canvas>
+          </div>
         </div>
 
         <div style="margin-top:16px;">
@@ -1390,6 +1395,9 @@
         options: {
           responsive: true,
           maintainAspectRatio: false,
+          animation: {
+            duration: 250,
+          },
           scales: {
             y: {
               beginAtZero: true,
