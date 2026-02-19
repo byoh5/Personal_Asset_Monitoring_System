@@ -185,6 +185,8 @@
       { id: 'dashboard', icon: '📊', label: '대시보드' },
       { id: 'assets', icon: '💼', label: '자산' },
       { id: 'analysis', icon: '🧭', label: '자산 분석' },
+      { id: 'manual', icon: '📘', label: '매뉴얼' },
+      { id: 'info', icon: 'ℹ️', label: '정보' },
     ],
 
     init() {
@@ -720,6 +722,10 @@
         this.renderAssetsPage(content);
       } else if (page === 'analysis') {
         this.renderAnalysisPage(content);
+      } else if (page === 'manual') {
+        this.renderManualPage(content);
+      } else if (page === 'info') {
+        this.renderInfoPage(content);
       } else {
         content.innerHTML = '<div class="error-container"><p>페이지를 찾을 수 없습니다.</p></div>';
       }
@@ -956,6 +962,197 @@
       if (this.state.analysisReport) {
         this.renderAnalysisReport(this.state.analysisReport);
       }
+    },
+
+    renderManualPage(container) {
+      const prompt = this.escapeHtml(this.getJsonAssetPrompt());
+
+      container.innerHTML = `
+        <div class="page-header">
+          <h1 class="page-title">웹 매뉴얼</h1>
+          <p class="page-subtitle">Personal Asset Monitoring System 웹 버전 전용 사용 가이드입니다.</p>
+        </div>
+
+        <div class="manual-content">
+          <div class="manual-body">
+            <h2>1. 시작하기</h2>
+            <ol>
+              <li>빠른 확인이 필요하면 <strong>데모 데이터 불러오기</strong> 버튼을 먼저 눌러 샘플 데이터를 확인합니다.</li>
+              <li>실데이터를 쓸 때는 상단의 <strong>엑셀 파일 선택</strong>으로 기존 파일을 열거나, 자산 페이지에서 직접 자산을 추가합니다.</li>
+              <li>브라우저는 최근 작업 상태를 자동 저장/복원하므로 다음 접속 시 이어서 작업할 수 있습니다.</li>
+            </ol>
+
+            <h2>2. 자산 입력 방법</h2>
+            <h3>A. 직접 입력</h3>
+            <ul>
+              <li>필수값: <code>자산명</code>, <code>자산타입</code>, <code>평가금액</code></li>
+              <li>타입에 따라 옵션 필드가 자동으로 바뀝니다. (예: 주식/ETF는 티커, 예금은 기관/만기)</li>
+              <li>목록에서 수정/삭제 후 즉시 합계와 분석 결과에 반영됩니다.</li>
+            </ul>
+
+            <h3>B. JSON 자산 입력기 (외부 LLM 연동)</h3>
+            <ul>
+              <li>자산 앱/화면을 캡처하고 아래 프롬프트를 외부 AI(ChatGPT, Copilot 등)에 전달합니다.</li>
+              <li>AI가 만든 JSON을 붙여넣고 <strong>미리보기</strong>에서 직접 보정한 뒤 <strong>자산 반영</strong>을 누릅니다.</li>
+              <li>타입이 표준 목록과 다르면 자동으로 <code>other</code>로 폴백되어 나중에 수정 가능합니다.</li>
+            </ul>
+
+            <div class="asset-json-prompt-card" style="margin-top: 12px;">
+              <div class="asset-json-prompt-header">
+                <strong>LLM 입력 프롬프트</strong>
+                <button id="manualPromptCopyBtn" type="button" class="btn btn-secondary btn-compact">프롬프트 복사</button>
+              </div>
+              <pre class="asset-json-prompt-body">${prompt}</pre>
+            </div>
+
+            <h3>C. 엑셀 저장/재사용</h3>
+            <ul>
+              <li>자산 페이지의 <strong>엑셀 저장</strong> 버튼으로 <code>Assets</code>, <code>Dashboard</code> 시트를 함께 내보냅니다.</li>
+              <li>저장한 엑셀은 다음 접속 시 다시 선택하면 동일 구조로 재로딩됩니다.</li>
+            </ul>
+
+            <h2>3. 입력 규칙 (자주 발생하는 오류)</h2>
+            <ul>
+              <li>JSON 문자열 따옴표는 스마트 따옴표(<code>“ ”</code>)가 아닌 직선 따옴표(<code>"</code>)를 사용해야 합니다.</li>
+              <li><code>valuation</code>은 <strong>평가금액</strong>이며 <strong>평가손익</strong> 값이 아닙니다.</li>
+              <li>부채(<code>liability</code>)를 제외한 자산은 평가금액을 양수로 입력합니다.</li>
+            </ul>
+
+            <h2>4. 보안/개인정보</h2>
+            <ul>
+              <li>웹 버전은 서버/DB 없이 브라우저 내에서만 동작합니다.</li>
+              <li>업로드한 엑셀/입력한 자산 데이터는 외부 백엔드로 전송하지 않습니다.</li>
+            </ul>
+          </div>
+        </div>
+      `;
+
+      this.bindManualPageEvents();
+    },
+
+    bindManualPageEvents() {
+      const copyBtn = document.getElementById('manualPromptCopyBtn');
+      if (!copyBtn) return;
+
+      copyBtn.addEventListener('click', async () => {
+        const ok = await this.copyToClipboard(this.getJsonAssetPrompt());
+        this.state.message = ok ? '매뉴얼의 LLM 프롬프트를 복사했습니다.' : '프롬프트 복사에 실패했습니다.';
+        this.state.messageType = ok ? 'success' : 'error';
+        this.renderDataToolbar();
+      });
+    },
+
+    renderInfoPage(container) {
+      container.innerHTML = `
+        <div class="page-header">
+          <h1 class="page-title">정보</h1>
+          <p class="page-subtitle">Personal Asset Monitoring System 웹 버전 소개 및 오픈소스 고지</p>
+        </div>
+
+        <div class="about-hero-card">
+          <div class="about-logo">
+            <img src="assets/pams-mark.svg" alt="PAMS mark" class="about-logo-image" />
+          </div>
+          <div class="about-hero-content">
+            <h2 class="product-name">Personal Asset Monitoring System</h2>
+            <div class="product-meta">
+              <span class="version-badge">Web Edition</span>
+              <span class="codename-badge">Hackathon Demo</span>
+            </div>
+            <p class="product-description">
+              개인 자산을 사용자가 직접 입력/검증/수정하고, 엑셀로 저장해 계속 관리할 수 있는 브라우저 기반 자산 모니터링 시스템입니다.
+              마이데이터 연동 없이도 캡처+LLM+JSON 흐름으로 데이터를 구조화해 반영할 수 있습니다.
+            </p>
+            <div class="product-details">
+              <div class="detail-item">
+                <span class="detail-label">실행 환경</span>
+                <span class="detail-value">Browser Only (Static Web)</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">데이터 저장</span>
+                <span class="detail-value">LocalStorage + Excel Export</span>
+              </div>
+              <div class="detail-item">
+                <span class="detail-label">핵심 입력</span>
+                <span class="detail-value">Manual / JSON / Excel</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="about-grid">
+          <div class="about-section-card">
+            <div class="section-header">
+              <span class="section-icon">🔐</span>
+              <h3 class="section-title">보안 및 데이터 처리</h3>
+            </div>
+            <div class="manual-body">
+              <ul>
+                <li>사용자 자산 데이터는 브라우저 내부에서 처리됩니다.</li>
+                <li>백엔드 전송/회원가입/계정 동기화가 없어 개인 정보 유출면을 최소화합니다.</li>
+                <li>외부 LLM 사용 시에는 사용자가 선택한 서비스에만 캡처/프롬프트를 전달합니다.</li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="about-section-card">
+            <div class="section-header">
+              <span class="section-icon">🧩</span>
+              <h3 class="section-title">웹 버전 주요 기능</h3>
+            </div>
+            <div class="manual-body">
+              <ul>
+                <li>엑셀 없이 자산 추가/수정/삭제 및 즉시 분석</li>
+                <li>JSON 붙여넣기 입력기 + 미리보기 보정 + 타입 폴백</li>
+                <li>자산 분석 리포트(비상자금, 저축률, 배분 비교, 추천 액션)</li>
+                <li>엑셀 내보내기/재불러오기, 다크·라이트 테마 전환</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <div class="about-opensource-card">
+          <div class="section-header">
+            <span class="section-icon">📚</span>
+            <h3 class="section-title">사용 오픈소스 (Web Edition)</h3>
+          </div>
+          <p class="opensource-intro">
+            웹 배포 버전에서 실제로 로드되는 프런트엔드 의존성 기준입니다.
+          </p>
+          <div style="overflow-x:auto;">
+            <table class="opensource-table">
+              <thead>
+                <tr>
+                  <th>라이브러리</th>
+                  <th>버전</th>
+                  <th>라이선스</th>
+                  <th>용도</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><a class="lib-link" href="https://www.chartjs.org/" target="_blank" rel="noopener noreferrer">Chart.js <span class="external-icon">↗</span></a></td>
+                  <td><code>4.4.0</code></td>
+                  <td><span class="license-badge">MIT</span></td>
+                  <td class="lib-description">자산 비중 차트 및 분석 비교 차트 렌더링</td>
+                </tr>
+                <tr>
+                  <td><a class="lib-link" href="https://sheetjs.com/" target="_blank" rel="noopener noreferrer">SheetJS (xlsx) <span class="external-icon">↗</span></a></td>
+                  <td><code>0.18.5</code></td>
+                  <td><span class="license-badge">Apache-2.0</span></td>
+                  <td class="lib-description">엑셀 파일 읽기/내보내기</td>
+                </tr>
+                <tr>
+                  <td><a class="lib-link" href="https://ant.design/" target="_blank" rel="noopener noreferrer">Ant Design CSS <span class="external-icon">↗</span></a></td>
+                  <td><code>5.12.8</code></td>
+                  <td><span class="license-badge">MIT</span></td>
+                  <td class="lib-description">기본 UI 리셋/스타일 기반</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      `;
     },
 
     renderAnalysisGoalCheckbox(value, label, checked) {
