@@ -113,12 +113,30 @@ body {
     z-index: 100;
 }
 
-.app-header h1 {
+.app-brand {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: 12px;
+}
+
+.app-logo {
+    width: 42px;
+    height: 42px;
+    object-fit: contain;
+    border-radius: 10px;
+    flex-shrink: 0;
+}
+
+.app-title {
     color: var(--text-header);
     margin: 0;
     font-size: 20px;
     font-weight: 600;
     letter-spacing: -0.025em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .header-actions {
@@ -1789,7 +1807,12 @@ body {
         grid-template-columns: 1fr;
     }
     
-    .app-header h1 {
+    .app-logo {
+        width: 34px;
+        height: 34px;
+    }
+
+    .app-title {
         font-size: 16px;
     }
 }

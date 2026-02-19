@@ -303,7 +303,10 @@
       app.innerHTML = `
         <div class="app-layout">
           <header class="app-header">
-            <h1>Personal Asset Monitoring</h1>
+            <div class="app-brand">
+              <img class="app-logo" src="assets/pams-mark.svg" alt="PAMS mark" loading="eager" />
+              <h1 class="app-title">Personal Asset Monitoring System</h1>
+            </div>
             <div class="header-actions">
               <button id="themeToggle" class="theme-toggle" title="테마 전환">🌙</button>
             </div>
