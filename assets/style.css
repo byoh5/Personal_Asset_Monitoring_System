@@ -1761,20 +1761,54 @@ body {
 }
 
 @media (max-width: 768px) {
+    .app-body {
+        flex-direction: column;
+        overflow: visible;
+    }
+
     .app-sidebar {
-        position: fixed;
-        height: 100vh;
-        left: -220px;
-        z-index: 1000;
-        transition: left 0.3s ease;
+        width: 100%;
+        position: sticky;
+        top: 64px;
+        z-index: 90;
+        border-right: none;
+        border-bottom: 1px solid var(--border-color);
+        box-shadow: var(--shadow-sm);
     }
-    
-    .app-sidebar.open {
-        left: 0;
+
+    .sidebar-menu {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        white-space: nowrap;
+        scrollbar-width: thin;
+        -webkit-overflow-scrolling: touch;
     }
-    
+
+    .sidebar-menu li {
+        flex: 0 0 auto;
+        margin-bottom: 0;
+        padding: 10px 14px;
+        border-radius: 999px;
+        gap: 8px;
+    }
+
+    .sidebar-menu li .menu-icon {
+        width: auto;
+        font-size: 16px;
+    }
+
+    .sidebar-menu li .menu-label {
+        font-size: 13px;
+        white-space: nowrap;
+    }
+
     .main-content {
         padding: 16px;
+        overflow-y: visible;
     }
     
     .stats-grid {
