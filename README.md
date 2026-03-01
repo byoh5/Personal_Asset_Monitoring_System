@@ -43,6 +43,7 @@
    - `OPENAI_API_KEY`: OpenAI API 키
    - `OPENAI_MODEL` (선택): 기본 `gpt-4.1-mini`
    - `OPENAI_MAX_OUTPUT_TOKENS` (선택): 기본 `360` (응답 길이/비용 상한)
+   - `OPENAI_MAX_OUTPUT_TOKENS_RETRY` (선택): 기본 `720` (JSON 파싱 실패 시 1회 재시도 상한)
    - `OPENAI_PROMPT_CACHE_KEY` (선택): 기본 `asset-report-v2` (Prompt Caching 히트율 안정화)
    - `OPENAI_PROMPT_CACHE_RETENTION` (선택): `in_memory` 또는 `24h` (모델 지원 시)
    - `OPENAI_RESPONSE_CACHE_TTL_MS` (선택): 기본 `300000` (동일 입력 서버 응답 재사용)

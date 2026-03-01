@@ -1858,9 +1858,6 @@
           <h4>배분 코멘트</h4>
           <p>${this.escapeHtml(this.toStringValue(report.allocation_commentary) || '-')}</p>
         </div>
-        <div class="form-hint" style="margin-top:8px;">
-          ${this.escapeHtml(this.toStringValue(report.disclaimer) || '본 결과는 참고용이며 투자자문이 아닙니다.')}
-        </div>
       `;
     },
 

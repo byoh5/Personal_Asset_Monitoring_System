@@ -8,6 +8,7 @@ const DEFAULT_CORS_ORIGIN = 'https://byoh5.github.io';
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const DEFAULT_RATE_LIMIT_MAX_REQUESTS = 8;
 const DEFAULT_MAX_OUTPUT_TOKENS = 360;
+const DEFAULT_RETRY_MAX_OUTPUT_TOKENS = 720;
 const DEFAULT_PROMPT_CACHE_KEY = 'asset-report-v2';
 const DEFAULT_RESPONSE_CACHE_TTL_MS = 5 * 60 * 1000;
 const PROMPT_CACHE_RETENTION_VALUES = new Set(['in_memory', '24h']);
@@ -28,7 +29,6 @@ const REPORT_JSON_SCHEMA = {
     'actions_30d',
     'actions_90d',
     'allocation_commentary',
-    'disclaimer',
   ],
   properties: {
     summary: { type: 'string', minLength: 1, maxLength: 240 },
@@ -57,7 +57,6 @@ const REPORT_JSON_SCHEMA = {
       maxItems: 4,
     },
     allocation_commentary: { type: 'string', minLength: 1, maxLength: 220 },
-    disclaimer: { type: 'string', minLength: 1, maxLength: 120 },
   },
 };
 
@@ -560,7 +559,6 @@ function normalizeReportShape(raw) {
     actions_30d: sanitizeItems(parsed.actions_30d),
     actions_90d: sanitizeItems(parsed.actions_90d),
     allocation_commentary: toString(parsed.allocation_commentary, ''),
-    disclaimer: toString(parsed.disclaimer, '본 결과는 참고용 정보이며 투자 자문이 아닙니다.'),
   };
 }
 
@@ -571,11 +569,103 @@ function buildSystemPrompt() {
     'Follow the provided schema exactly. Do not add extra keys.',
     'Keep every item short, practical, and based on numeric input values.',
     'Do not provide legal or tax advice.',
-    'disclaimer must clearly state this is not investment advice.',
   ].join('\n');
 }
 
-function buildSuccessPayload({ model, report, usage, serverResponseCacheHit }) {
+function isLikelyTruncatedResponse(openaiJson, outputText) {
+  const status = toString(openaiJson?.status, '').toLowerCase();
+  const incompleteReason = toString(openaiJson?.incomplete_details?.reason, '').toLowerCase();
+  if (status === 'incomplete') return true;
+  if (incompleteReason.includes('max_output_tokens') || incompleteReason.includes('length')) return true;
+
+  const outputs = Array.isArray(openaiJson?.output) ? openaiJson.output : [];
+  for (const item of outputs) {
+    const itemStatus = toString(item?.status, '').toLowerCase();
+    const itemReason = toString(item?.incomplete_details?.reason, '').toLowerCase();
+    if (itemStatus === 'incomplete') return true;
+    if (itemReason.includes('max_output_tokens') || itemReason.includes('length')) return true;
+  }
+
+  const text = toString(outputText, '').trim();
+  if (!text) return false;
+  if (text.includes('{') && !text.endsWith('}')) return true;
+  return false;
+}
+
+async function requestOpenAIWithFallbacks({
+  apiKey,
+  model,
+  maxOutputTokens,
+  rawInput,
+  promptCacheKey,
+  promptCacheRetention,
+}) {
+  let usedStructuredOutput = true;
+  let enablePromptCaching = true;
+  let attempts = 0;
+  let openaiRes = null;
+  let openaiJson = null;
+
+  while (attempts < 3) {
+    const currentPayload = buildResponsePayload({
+      model,
+      maxOutputTokens,
+      rawInput,
+      useStructuredOutput: usedStructuredOutput,
+      enablePromptCaching,
+      promptCacheKey,
+      promptCacheRetention,
+    });
+    ({ openaiRes, openaiJson } = await requestOpenAI(apiKey, currentPayload));
+    if (openaiRes.ok) break;
+
+    let shouldRetry = false;
+    if (enablePromptCaching && shouldRetryWithoutPromptCaching(openaiJson)) {
+      enablePromptCaching = false;
+      shouldRetry = true;
+    } else if (usedStructuredOutput && shouldRetryWithoutStructuredOutput(openaiJson)) {
+      usedStructuredOutput = false;
+      shouldRetry = true;
+    }
+
+    if (!shouldRetry) break;
+    attempts += 1;
+  }
+
+  return { openaiRes, openaiJson, usedStructuredOutput };
+}
+
+function extractReportFromResponse(openaiJson) {
+  const structured = extractStructuredResponse(openaiJson);
+  if (structured && typeof structured === 'object') {
+    return {
+      report: normalizeReportShape(structured),
+      parsed: true,
+      usedStructuredOutput: true,
+      outputText: '',
+    };
+  }
+
+  const outputText = extractResponseText(openaiJson);
+  const parsed = safeJsonParse(outputText);
+  if (!parsed) {
+    return {
+      report: null,
+      parsed: false,
+      usedStructuredOutput: false,
+      outputText,
+    };
+  }
+
+  return {
+    report: normalizeReportShape(parsed),
+    parsed: true,
+    usedStructuredOutput: false,
+    outputText,
+  };
+}
+
+function buildSuccessPayload({ model, report, usage, serverResponseCacheHit, recoveredFromTruncation }) {
   const payload = {
     ok: true,
     model,
@@ -583,6 +673,7 @@ function buildSuccessPayload({ model, report, usage, serverResponseCacheHit }) {
     report,
     cache: {
       server_response_cache_hit: !!serverResponseCacheHit,
+      recovered_from_truncation: !!recoveredFromTruncation,
     },
   };
   if (usage) {
@@ -639,6 +730,13 @@ module.exports = async function handler(req, res) {
     160,
     toNumber(process.env.OPENAI_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS)
   );
+  const retryMaxOutputTokens = Math.min(
+    1200,
+    Math.max(
+      maxOutputTokens + 80,
+      toNumber(process.env.OPENAI_MAX_OUTPUT_TOKENS_RETRY, DEFAULT_RETRY_MAX_OUTPUT_TOKENS)
+    )
+  );
   const promptCacheKey = normalizePromptCacheKey(model);
   const promptCacheRetention = normalizePromptCacheRetention(process.env.OPENAI_PROMPT_CACHE_RETENTION);
   const responseCacheTtlMs = getResponseCacheTtlMs();
@@ -660,73 +758,68 @@ module.exports = async function handler(req, res) {
   }
 
   try {
-    let usedStructuredOutput = true;
-    let enablePromptCaching = true;
-    let attempts = 0;
-    let openaiRes = null;
-    let openaiJson = null;
+    let recoveredFromTruncation = false;
+    let requestResult = await requestOpenAIWithFallbacks({
+      apiKey,
+      model,
+      maxOutputTokens,
+      rawInput,
+      promptCacheKey,
+      promptCacheRetention,
+    });
 
-    while (attempts < 3) {
-      const currentPayload = buildResponsePayload({
-        model,
-        maxOutputTokens,
-        rawInput,
-        useStructuredOutput: usedStructuredOutput,
-        enablePromptCaching,
-        promptCacheKey,
-        promptCacheRetention,
-      });
-      ({ openaiRes, openaiJson } = await requestOpenAI(apiKey, currentPayload));
-      if (openaiRes.ok) break;
-
-      let shouldRetry = false;
-      if (enablePromptCaching && shouldRetryWithoutPromptCaching(openaiJson)) {
-        enablePromptCaching = false;
-        shouldRetry = true;
-      } else if (usedStructuredOutput && shouldRetryWithoutStructuredOutput(openaiJson)) {
-        usedStructuredOutput = false;
-        shouldRetry = true;
-      }
-
-      if (!shouldRetry) break;
-      attempts += 1;
-    }
-
-    if (!openaiRes || !openaiRes.ok) {
-      const upstreamError = toString(openaiJson?.error?.message, 'OpenAI API request failed.');
+    if (!requestResult.openaiRes || !requestResult.openaiRes.ok) {
+      const upstreamError = toString(requestResult.openaiJson?.error?.message, 'OpenAI API request failed.');
       return res.status(502).json({ error: `OpenAI 오류: ${upstreamError}` });
     }
 
-    const usage = extractUsage(openaiJson);
-    const structured = extractStructuredResponse(openaiJson);
-    if (structured && typeof structured === 'object') {
-      const report = normalizeReportShape(structured);
-      const payload = buildSuccessPayload({
+    let extracted = extractReportFromResponse(requestResult.openaiJson);
+
+    if (!extracted.parsed && retryMaxOutputTokens > maxOutputTokens) {
+      const likelyTruncated = isLikelyTruncatedResponse(
+        requestResult.openaiJson,
+        extracted.outputText
+      );
+
+      const retryResult = await requestOpenAIWithFallbacks({
+        apiKey,
         model,
-        report,
-        usage,
-        serverResponseCacheHit: false,
+        maxOutputTokens: retryMaxOutputTokens,
+        rawInput,
+        promptCacheKey,
+        promptCacheRetention,
       });
-      writeResponseCache(responseCacheKey, payload, responseCacheTtlMs, Date.now());
-      return res.status(200).json(payload);
+
+      if (retryResult.openaiRes && retryResult.openaiRes.ok) {
+        const retryExtracted = extractReportFromResponse(retryResult.openaiJson);
+        if (retryExtracted.parsed) {
+          requestResult = retryResult;
+          extracted = retryExtracted;
+          recoveredFromTruncation = true;
+          if (likelyTruncated) {
+            console.warn('Recovered from likely truncated OpenAI JSON response.');
+          }
+        }
+      }
     }
 
-    const outputText = extractResponseText(openaiJson);
-    const parsed = safeJsonParse(outputText);
-    if (!parsed) {
-      const hint = usedStructuredOutput
+    if (!extracted.parsed || !extracted.report) {
+      const hint = requestResult.usedStructuredOutput
         ? ' (structured output)'
         : ' (fallback output)';
       console.warn(`Failed to parse OpenAI response JSON${hint}`);
-      return res.status(502).json({ error: 'OpenAI 응답을 JSON으로 파싱하지 못했습니다.' });
+      return res.status(502).json({
+        error: 'OpenAI 응답이 잘렸거나 JSON 파싱에 실패했습니다. 잠시 후 다시 시도해주세요.',
+      });
     }
 
-    const report = normalizeReportShape(parsed);
+    const usage = extractUsage(requestResult.openaiJson);
     const payload = buildSuccessPayload({
       model,
-      report,
+      report: extracted.report,
       usage,
       serverResponseCacheHit: false,
+      recoveredFromTruncation,
     });
     writeResponseCache(responseCacheKey, payload, responseCacheTtlMs, Date.now());
     return res.status(200).json(payload);
