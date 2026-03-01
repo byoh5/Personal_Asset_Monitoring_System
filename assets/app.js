@@ -4,6 +4,7 @@
     lastFile: 'asset_monitoring-web-last-file-meta',
     snapshot: 'asset_monitoring-web-snapshot-v1',
     analysisProfile: 'asset_monitoring-web-analysis-profile-v1',
+    analysisAiEndpoint: 'asset_monitoring-web-analysis-ai-endpoint-v1',
   };
 
   const ASSET_TYPE_LABELS = {
@@ -58,6 +59,7 @@
   const CURRENCY_OPTIONS = ['KRW', 'USD', 'EUR', 'JPY', 'CNY', 'HKD'];
   const MARKET_OPTION_TYPES = ['stock', 'etf', 'crypto', 'fund', 'bond'];
   const BANK_OPTION_TYPES = ['deposit', 'pension', 'insurance', 'liability'];
+  const DEFAULT_OPENAI_REPORT_ENDPOINT = '/api/openai-asset-report';
 
   const PiePercentLabelPlugin = {
     id: 'piePercentLabel',
@@ -179,6 +181,11 @@
       manualAssetError: '',
       analysisProfile: null,
       analysisReport: null,
+      analysisAiEndpoint: DEFAULT_OPENAI_REPORT_ENDPOINT,
+      analysisAiReport: null,
+      analysisAiStatus: '',
+      analysisAiStatusType: 'info',
+      analysisAiLoading: false,
     },
 
     menuItems: [
@@ -194,6 +201,7 @@
       this.loadFileMeta();
       this.loadDataSnapshot();
       this.loadAnalysisProfile();
+      this.loadAnalysisAiEndpoint();
       this.renderLayout();
       this.bindLayoutEvents();
       this.renderPage('dashboard');
@@ -297,6 +305,27 @@
         localStorage.setItem(STORAGE.analysisProfile, JSON.stringify(normalized));
       } catch (error) {
         console.warn('Failed to save analysis profile:', error);
+      }
+    },
+
+    loadAnalysisAiEndpoint() {
+      try {
+        const raw = localStorage.getItem(STORAGE.analysisAiEndpoint);
+        const normalized = this.normalizeAnalysisAiEndpoint(raw);
+        this.state.analysisAiEndpoint = normalized || DEFAULT_OPENAI_REPORT_ENDPOINT;
+      } catch (error) {
+        console.warn('Failed to load analysis AI endpoint:', error);
+        this.state.analysisAiEndpoint = DEFAULT_OPENAI_REPORT_ENDPOINT;
+      }
+    },
+
+    saveAnalysisAiEndpoint(value) {
+      const normalized = this.normalizeAnalysisAiEndpoint(value);
+      this.state.analysisAiEndpoint = normalized || DEFAULT_OPENAI_REPORT_ENDPOINT;
+      try {
+        localStorage.setItem(STORAGE.analysisAiEndpoint, this.state.analysisAiEndpoint);
+      } catch (error) {
+        console.warn('Failed to save analysis AI endpoint:', error);
       }
     },
 
@@ -463,6 +492,10 @@
       this.resetJsonImporterState();
       this.resetManualAssetDraft();
       this.state.analysisReport = null;
+      this.state.analysisAiReport = null;
+      this.state.analysisAiLoading = false;
+      this.state.analysisAiStatus = '';
+      this.state.analysisAiStatusType = 'info';
       this.clearDataSnapshot();
       this.renderDataToolbar();
       this.renderPage(this.currentPage);
@@ -950,11 +983,41 @@
             <button id="analysisGenerate" type="button" class="btn btn-secondary">리포트 생성</button>
             <span id="analysisStatus" style="color: var(--text-secondary); font-size:13px;"></span>
           </div>
+
+          <div class="analysis-ai-panel">
+            <div class="analysis-ai-panel-head">
+              <h4>OpenAI 확장 리포트</h4>
+              <span class="analysis-ai-pill">서버리스 API</span>
+            </div>
+            <p class="form-hint" style="margin-top:0;">
+              API 키는 서버리스 환경변수에만 저장하고, 브라우저는 엔드포인트만 호출합니다.
+            </p>
+            <div class="analysis-ai-endpoint-row">
+              <input
+                id="analysisAiEndpoint"
+                class="form-input"
+                type="text"
+                value="${this.escapeHtml(this.state.analysisAiEndpoint || DEFAULT_OPENAI_REPORT_ENDPOINT)}"
+                placeholder="/api/openai-asset-report"
+              />
+              <button id="analysisAiGenerate" type="button" class="btn btn-primary" ${this.state.analysisAiLoading ? 'disabled' : ''}>
+                ${this.state.analysisAiLoading ? '생성 중...' : 'OpenAI 리포트 생성'}
+              </button>
+            </div>
+            <div id="analysisAiStatus" class="analysis-ai-status ${this.escapeHtml(this.state.analysisAiStatusType || 'info')}">
+              ${this.escapeHtml(this.state.analysisAiStatus || '')}
+            </div>
+          </div>
         </div>
 
         <div id="analysisReport" class="chart-container" style="${this.state.analysisReport ? '' : 'display:none;'}">
           <h3>자산 분석 리포트</h3>
           <div id="analysisReportContent"></div>
+        </div>
+
+        <div id="analysisAiReport" class="chart-container" style="${this.state.analysisAiReport ? '' : 'display:none;'}">
+          <h3>OpenAI 확장 리포트</h3>
+          <div id="analysisAiReportContent"></div>
         </div>
       `;
 
@@ -962,6 +1025,9 @@
       this.bindAnalysisAmountHints();
       if (this.state.analysisReport) {
         this.renderAnalysisReport(this.state.analysisReport);
+      }
+      if (this.state.analysisAiReport) {
+        this.renderAnalysisAiReport(this.state.analysisAiReport);
       }
     },
 
@@ -1020,8 +1086,9 @@
 
             <h2>4. 보안/개인정보</h2>
             <ul>
-              <li>웹 버전은 서버/DB 없이 브라우저 내에서만 동작합니다.</li>
-              <li>업로드한 엑셀/입력한 자산 데이터는 외부 백엔드로 전송하지 않습니다.</li>
+              <li>기본 기능(엑셀/수동입력/JSON 반영/로컬 리포트)은 브라우저 내에서만 처리됩니다.</li>
+              <li>OpenAI 확장 리포트를 실행하면 분석 요약 데이터가 사용자가 지정한 서버리스 API를 통해 OpenAI로 전송됩니다.</li>
+              <li>OpenAI API 키는 프론트가 아닌 서버리스 환경변수에 저장해야 합니다.</li>
             </ul>
           </div>
         </div>
@@ -1088,8 +1155,9 @@
             </div>
             <div class="manual-body">
               <ul>
-                <li>사용자 자산 데이터는 브라우저 내부에서 처리됩니다.</li>
-                <li>백엔드 전송/회원가입/계정 동기화가 없어 개인 정보 유출면을 최소화합니다.</li>
+                <li>기본 입력/조회/저장 기능은 브라우저 내부에서 처리됩니다.</li>
+                <li>OpenAI 확장 리포트를 실행하면 분석용 요약 데이터만 서버리스 API를 거쳐 OpenAI로 전송됩니다.</li>
+                <li>API 키는 서버리스 환경변수로만 저장하고, 프론트 코드/브라우저 저장소에 두지 않습니다.</li>
                 <li>외부 LLM 사용 시에는 사용자가 선택한 서비스에만 캡처/프롬프트를 전달합니다.</li>
               </ul>
             </div>
@@ -1105,6 +1173,7 @@
                 <li>엑셀 없이 자산 추가/수정/삭제 및 즉시 분석</li>
                 <li>JSON 붙여넣기 입력기 + 미리보기 보정 + 타입 폴백</li>
                 <li>자산 분석 리포트(비상자금, 저축률, 배분 비교, 추천 액션)</li>
+                <li>OpenAI 확장 리포트(요약/강점/리스크/30일·90일 액션)</li>
                 <li>엑셀 내보내기/재불러오기, 다크·라이트 테마 전환</li>
               </ul>
             </div>
@@ -1167,11 +1236,21 @@
     bindAnalysisEvents() {
       const saveBtn = document.getElementById('analysisSave');
       const generateBtn = document.getElementById('analysisGenerate');
+      const aiGenerateBtn = document.getElementById('analysisAiGenerate');
+      const aiEndpointInput = document.getElementById('analysisAiEndpoint');
+
+      if (aiEndpointInput) {
+        aiEndpointInput.addEventListener('change', () => {
+          this.saveAnalysisAiEndpoint(aiEndpointInput.value);
+          aiEndpointInput.value = this.state.analysisAiEndpoint;
+        });
+      }
 
       if (saveBtn) {
         saveBtn.addEventListener('click', () => {
           const answers = this.gatherAnalysisAnswers();
           this.saveAnalysisProfile(answers);
+          this.invalidateAnalysisAiReport('프로필이 변경되어 OpenAI 리포트를 다시 생성해주세요.');
           this.setAnalysisStatus('프로필 저장 완료', 'success');
         });
       }
@@ -1185,8 +1264,15 @@
           const answers = this.gatherAnalysisAnswers();
           this.saveAnalysisProfile(answers);
           this.state.analysisReport = this.generateAnalysisReport(answers);
+          this.invalidateAnalysisAiReport('기본 리포트가 갱신되어 OpenAI 리포트를 다시 생성해주세요.');
           this.renderAnalysisReport(this.state.analysisReport);
           this.setAnalysisStatus('리포트 생성 완료', 'success');
+        });
+      }
+
+      if (aiGenerateBtn) {
+        aiGenerateBtn.addEventListener('click', async () => {
+          await this.generateAnalysisAiReport();
         });
       }
     },
@@ -1221,6 +1307,137 @@
       } else {
         statusEl.style.color = 'var(--text-secondary)';
       }
+    },
+
+    setAnalysisAiStatus(text, type = 'info') {
+      this.state.analysisAiStatus = text || '';
+      this.state.analysisAiStatusType = type || 'info';
+
+      const statusEl = document.getElementById('analysisAiStatus');
+      if (!statusEl) return;
+      statusEl.textContent = this.state.analysisAiStatus;
+      statusEl.className = `analysis-ai-status ${this.state.analysisAiStatusType}`;
+    },
+
+    invalidateAnalysisAiReport(message) {
+      this.state.analysisAiReport = null;
+      const wrapper = document.getElementById('analysisAiReport');
+      if (wrapper) wrapper.style.display = 'none';
+      if (message) {
+        this.setAnalysisAiStatus(message, 'info');
+      } else {
+        this.setAnalysisAiStatus('', 'info');
+      }
+    },
+
+    async generateAnalysisAiReport() {
+      if (this.state.analysisAiLoading) return;
+      if (!this.state.assets.length) {
+        this.setAnalysisAiStatus('분석할 자산 데이터가 없습니다. 데모 데이터 또는 엑셀을 먼저 불러오세요.', 'error');
+        return;
+      }
+
+      const endpointInputValue = document.getElementById('analysisAiEndpoint')?.value;
+      this.saveAnalysisAiEndpoint(endpointInputValue);
+      const endpoint = this.state.analysisAiEndpoint || DEFAULT_OPENAI_REPORT_ENDPOINT;
+
+      const answers = this.gatherAnalysisAnswers();
+      this.saveAnalysisProfile(answers);
+      this.state.analysisReport = this.generateAnalysisReport(answers);
+      this.renderAnalysisReport(this.state.analysisReport);
+
+      this.state.analysisAiReport = null;
+      this.state.analysisAiLoading = true;
+      this.setAnalysisAiStatus('OpenAI 리포트를 생성 중입니다...', 'info');
+      const pageContent = document.getElementById('page-content');
+      if (pageContent) this.renderAnalysisPage(pageContent);
+
+      try {
+        const payload = this.buildAnalysisAiPayload(answers, this.state.analysisReport);
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+
+        const result = await response.json().catch(() => null);
+        if (!response.ok) {
+          const message = result && typeof result.error === 'string' ? result.error : `요청 실패 (${response.status})`;
+          throw new Error(message);
+        }
+        if (!result || typeof result !== 'object' || !result.report) {
+          throw new Error('서버 응답 형식이 올바르지 않습니다.');
+        }
+
+        this.state.analysisAiReport = result;
+        this.setAnalysisAiStatus('OpenAI 리포트 생성 완료', 'success');
+      } catch (error) {
+        console.error('OpenAI analysis report error:', error);
+        this.setAnalysisAiStatus(`OpenAI 리포트 생성 실패: ${error.message}`, 'error');
+      } finally {
+        this.state.analysisAiLoading = false;
+        if (this.currentPage === 'analysis') {
+          const currentContent = document.getElementById('page-content');
+          if (currentContent) this.renderAnalysisPage(currentContent);
+        }
+      }
+    },
+
+    buildAnalysisAiPayload(answers, report) {
+      const metrics = report?.metrics || {};
+      const allocation = report?.allocation || {};
+      const recommendations = Array.isArray(report?.recommendations) ? report.recommendations.slice(0, 8) : [];
+      const topAssets = this.getTopAssetsForAi(10);
+
+      return {
+        generated_at: new Date().toISOString(),
+        locale: 'ko-KR',
+        profile: {
+          age_range: answers.age_range,
+          household_size: answers.household_size,
+          dependents: answers.dependents,
+          income_type: answers.income_type,
+          monthly_income: answers.monthly_income,
+          monthly_expense: answers.monthly_expense,
+          risk_preference: answers.risk_preference,
+          housing_status: answers.housing_status,
+          retirement_age: answers.retirement_age,
+          goals: Array.isArray(answers.goals) ? answers.goals : [],
+        },
+        snapshot: {
+          total_assets: metrics.total_assets || 0,
+          total_liabilities: metrics.total_liabilities || 0,
+          net_worth: metrics.net_worth || 0,
+          emergency_months: metrics.emergency_months || 0,
+          emergency_target_months: metrics.emergency_target_months || 0,
+          debt_ratio: metrics.debt_ratio || 0,
+          savings_rate: metrics.savings_rate || 0,
+          monthly_surplus: metrics.monthly_surplus || 0,
+          allocation_current: allocation.current || {},
+          allocation_target: allocation.target || {},
+          local_summary: report?.summary || '',
+          local_recommendations: recommendations,
+        },
+        assets: topAssets,
+      };
+    },
+
+    getTopAssetsForAi(limit = 10) {
+      const top = (Array.isArray(this.state.assets) ? this.state.assets : [])
+        .map((asset) => ({
+          name: asset?.name || '-',
+          type: this.normalizeAssetType(asset?.type || 'other'),
+          valuation: Number(asset?.valuation || 0),
+          currency: asset?.currency || 'KRW',
+          ticker: asset?.ticker || null,
+          market: asset?.market || null,
+        }))
+        .filter((asset) => Number.isFinite(asset.valuation) && asset.valuation !== 0)
+        .sort((a, b) => Math.abs(b.valuation) - Math.abs(a.valuation))
+        .slice(0, limit);
+      return top;
     },
 
     bindAnalysisAmountHints() {
@@ -1270,6 +1487,8 @@
     },
 
     refreshAnalysisReportIfExists() {
+      const hadAiReport = !!this.state.analysisAiReport;
+      this.invalidateAnalysisAiReport(hadAiReport ? '자산이 변경되어 OpenAI 리포트를 다시 생성해주세요.' : '');
       if (!this.state.analysisReport) return;
       const answers = this.state.analysisProfile || this.getDefaultAnalysisProfile();
       this.state.analysisReport = this.generateAnalysisReport(answers);
@@ -1557,6 +1776,60 @@
       `;
 
       this.renderAnalysisAllocationChart(allocation);
+    },
+
+    renderAnalysisAiReport(result) {
+      const wrapper = document.getElementById('analysisAiReport');
+      const content = document.getElementById('analysisAiReportContent');
+      if (!wrapper || !content || !result || !result.report) return;
+
+      const report = result.report;
+      const model = this.toStringValue(result.model) || '-';
+      const generatedAt = this.formatTimestamp(result.generatedAt);
+      const strengths = this.ensureStringArray(report.strengths);
+      const risks = this.ensureStringArray(report.risks);
+      const actions30d = this.ensureStringArray(report.actions_30d);
+      const actions90d = this.ensureStringArray(report.actions_90d);
+
+      wrapper.style.display = 'block';
+      content.innerHTML = `
+        <div class="analysis-ai-meta">
+          <span>모델: <strong>${this.escapeHtml(model)}</strong></span>
+          <span>생성시각: <strong>${this.escapeHtml(generatedAt)}</strong></span>
+        </div>
+
+        <div class="analysis-ai-summary">
+          <h4>요약</h4>
+          <p>${this.escapeHtml(this.toStringValue(report.summary) || '-')}</p>
+        </div>
+
+        <div class="analysis-ai-grid">
+          ${this.renderAnalysisAiListCard('강점', strengths, 'strength')}
+          ${this.renderAnalysisAiListCard('리스크', risks, 'risk')}
+          ${this.renderAnalysisAiListCard('30일 액션', actions30d, 'action')}
+          ${this.renderAnalysisAiListCard('90일 액션', actions90d, 'action')}
+        </div>
+
+        <div class="analysis-ai-summary">
+          <h4>배분 코멘트</h4>
+          <p>${this.escapeHtml(this.toStringValue(report.allocation_commentary) || '-')}</p>
+        </div>
+        <div class="form-hint" style="margin-top:8px;">
+          ${this.escapeHtml(this.toStringValue(report.disclaimer) || '본 결과는 참고용이며 투자자문이 아닙니다.')}
+        </div>
+      `;
+    },
+
+    renderAnalysisAiListCard(title, items, variant) {
+      const rows = this.ensureStringArray(items);
+      const klass = `analysis-ai-list ${variant || 'info'}`;
+      const listHtml = rows.length ? rows.map((item) => `<li>${this.escapeHtml(item)}</li>`).join('') : '<li>-</li>';
+      return `
+        <div class="${klass}">
+          <h4>${this.escapeHtml(title)}</h4>
+          <ul>${listHtml}</ul>
+        </div>
+      `;
     },
 
     renderAnalysisAllocationCard(key, allocation) {
@@ -3143,6 +3416,21 @@
       const date = new Date(isoString);
       if (Number.isNaN(date.getTime())) return '-';
       return date.toLocaleString('ko-KR');
+    },
+
+    normalizeAnalysisAiEndpoint(value) {
+      const raw = this.toStringValue(value);
+      if (!raw) return DEFAULT_OPENAI_REPORT_ENDPOINT;
+      if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+      if (raw.startsWith('/')) return raw;
+      return `/${raw}`;
+    },
+
+    ensureStringArray(value) {
+      if (!Array.isArray(value)) return [];
+      return value
+        .map((item) => this.toStringValue(item))
+        .filter((item) => !!item);
     },
 
     escapeHtml(value) {
