@@ -59,7 +59,7 @@
   const CURRENCY_OPTIONS = ['KRW', 'USD', 'EUR', 'JPY', 'CNY', 'HKD'];
   const MARKET_OPTION_TYPES = ['stock', 'etf', 'crypto', 'fund', 'bond'];
   const BANK_OPTION_TYPES = ['deposit', 'pension', 'insurance', 'liability'];
-  const DEFAULT_OPENAI_REPORT_ENDPOINT = '/api/openai-asset-report';
+  const DEFAULT_OPENAI_REPORT_ENDPOINT = 'https://personal-asset-monitoring-system.vercel.app/api/openai-asset-report';
 
   const PiePercentLabelPlugin = {
     id: 'piePercentLabel',
