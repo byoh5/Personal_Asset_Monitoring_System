@@ -6,6 +6,49 @@ const DEFAULT_CORS_ORIGIN = 'https://byoh5.github.io';
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const DEFAULT_RATE_LIMIT_MAX_REQUESTS = 8;
 const DEFAULT_MAX_OUTPUT_TOKENS = 500;
+const REPORT_SCHEMA_NAME = 'asset_report';
+const REPORT_JSON_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'summary',
+    'strengths',
+    'risks',
+    'actions_30d',
+    'actions_90d',
+    'allocation_commentary',
+    'disclaimer',
+  ],
+  properties: {
+    summary: { type: 'string' },
+    strengths: {
+      type: 'array',
+      items: { type: 'string' },
+      minItems: 2,
+      maxItems: 4,
+    },
+    risks: {
+      type: 'array',
+      items: { type: 'string' },
+      minItems: 2,
+      maxItems: 4,
+    },
+    actions_30d: {
+      type: 'array',
+      items: { type: 'string' },
+      minItems: 2,
+      maxItems: 4,
+    },
+    actions_90d: {
+      type: 'array',
+      items: { type: 'string' },
+      minItems: 2,
+      maxItems: 4,
+    },
+    allocation_commentary: { type: 'string' },
+    disclaimer: { type: 'string' },
+  },
+};
 
 const rateLimitStore = globalThis.__pamsRateLimitStore || new Map();
 globalThis.__pamsRateLimitStore = rateLimitStore;
@@ -207,21 +250,35 @@ function safeJsonParse(raw) {
   const text = stripCodeFence(raw);
   if (!text) return null;
 
-  try {
-    return JSON.parse(text);
-  } catch (_error) {
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
-    if (start >= 0 && end > start) {
-      const fragment = text.slice(start, end + 1);
+  const candidates = [];
+  candidates.push(text);
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    candidates.push(text.slice(start, end + 1));
+  }
+
+  for (const candidate of candidates) {
+    const variants = [
+      candidate,
+      candidate
+        .replace(/[“”＂]/g, '"')
+        .replace(/[‘’＇]/g, "'"),
+      candidate
+        .replace(/[“”＂]/g, '"')
+        .replace(/[‘’＇]/g, "'")
+        .replace(/,\s*([}\]])/g, '$1'),
+    ];
+
+    for (const variant of variants) {
       try {
-        return JSON.parse(fragment);
-      } catch (_error2) {
-        return null;
+        return JSON.parse(variant);
+      } catch (_error) {
+        // Continue to next variant.
       }
     }
-    return null;
   }
+  return null;
 }
 
 function extractResponseText(responseJson) {
@@ -238,6 +295,8 @@ function extractResponseText(responseJson) {
     content.forEach((part) => {
       if (typeof part?.text === 'string' && part.text.trim()) {
         chunks.push(part.text.trim());
+      } else if (typeof part?.output_text === 'string' && part.output_text.trim()) {
+        chunks.push(part.output_text.trim());
       }
     });
   });
@@ -247,6 +306,80 @@ function extractResponseText(responseJson) {
   const firstMessage = choices[0]?.message?.content;
   if (typeof firstMessage === 'string' && firstMessage.trim()) return firstMessage.trim();
   return '';
+}
+
+function extractStructuredResponse(responseJson) {
+  if (responseJson && typeof responseJson.output_parsed === 'object' && responseJson.output_parsed !== null) {
+    return responseJson.output_parsed;
+  }
+  if (responseJson && typeof responseJson.parsed === 'object' && responseJson.parsed !== null) {
+    return responseJson.parsed;
+  }
+
+  const outputs = Array.isArray(responseJson?.output) ? responseJson.output : [];
+  for (const item of outputs) {
+    const content = Array.isArray(item?.content) ? item.content : [];
+    for (const part of content) {
+      if (part && typeof part === 'object') {
+        if (part.parsed && typeof part.parsed === 'object') return part.parsed;
+        if (part.json && typeof part.json === 'object') return part.json;
+      }
+    }
+  }
+  return null;
+}
+
+function buildResponsePayload({ model, maxOutputTokens, rawInput, useStructuredOutput }) {
+  const payload = {
+    model,
+    max_output_tokens: maxOutputTokens,
+    input: [
+      {
+        role: 'system',
+        content: [{ type: 'input_text', text: buildSystemPrompt() }],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'input_text', text: rawInput }],
+      },
+    ],
+  };
+
+  if (useStructuredOutput) {
+    payload.text = {
+      format: {
+        type: 'json_schema',
+        name: REPORT_SCHEMA_NAME,
+        strict: true,
+        schema: REPORT_JSON_SCHEMA,
+      },
+    };
+  }
+  return payload;
+}
+
+function shouldRetryWithoutStructuredOutput(openaiJson) {
+  const message = toString(openaiJson?.error?.message, '').toLowerCase();
+  if (!message) return false;
+  return (
+    message.includes('unknown parameter') ||
+    message.includes('text.format') ||
+    message.includes('json_schema') ||
+    message.includes('schema')
+  );
+}
+
+async function requestOpenAI(apiKey, payload) {
+  const openaiRes = await fetch(OPENAI_RESPONSES_API_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  const openaiJson = await openaiRes.json().catch(() => ({}));
+  return { openaiRes, openaiJson };
 }
 
 function normalizeReportShape(raw) {
@@ -325,43 +458,59 @@ module.exports = async function handler(req, res) {
     return res.status(413).json({ error: '입력 데이터가 너무 큽니다. 자산 항목 수를 줄여주세요.' });
   }
 
-  const responsePayload = {
-    model,
-    max_output_tokens: Math.max(
-      200,
-      toNumber(process.env.OPENAI_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS)
-    ),
-    input: [
-      {
-        role: 'system',
-        content: [{ type: 'input_text', text: buildSystemPrompt() }],
-      },
-      {
-        role: 'user',
-        content: [{ type: 'input_text', text: rawInput }],
-      },
-    ],
-  };
+  const maxOutputTokens = Math.max(
+    200,
+    toNumber(process.env.OPENAI_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS)
+  );
 
   try {
-    const openaiRes = await fetch(OPENAI_RESPONSES_API_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(responsePayload),
-    });
+    let usedStructuredOutput = true;
+    let { openaiRes, openaiJson } = await requestOpenAI(
+      apiKey,
+      buildResponsePayload({
+        model,
+        maxOutputTokens,
+        rawInput,
+        useStructuredOutput: true,
+      })
+    );
 
-    const openaiJson = await openaiRes.json().catch(() => ({}));
+    if (!openaiRes.ok && shouldRetryWithoutStructuredOutput(openaiJson)) {
+      usedStructuredOutput = false;
+      ({ openaiRes, openaiJson } = await requestOpenAI(
+        apiKey,
+        buildResponsePayload({
+          model,
+          maxOutputTokens,
+          rawInput,
+          useStructuredOutput: false,
+        })
+      ));
+    }
+
     if (!openaiRes.ok) {
       const upstreamError = toString(openaiJson?.error?.message, 'OpenAI API request failed.');
       return res.status(502).json({ error: `OpenAI 오류: ${upstreamError}` });
     }
 
+    const structured = extractStructuredResponse(openaiJson);
+    if (structured && typeof structured === 'object') {
+      const report = normalizeReportShape(structured);
+      return res.status(200).json({
+        ok: true,
+        model,
+        generatedAt: new Date().toISOString(),
+        report,
+      });
+    }
+
     const outputText = extractResponseText(openaiJson);
     const parsed = safeJsonParse(outputText);
     if (!parsed) {
+      const hint = usedStructuredOutput
+        ? ' (structured output)'
+        : ' (fallback output)';
+      console.warn(`Failed to parse OpenAI response JSON${hint}`);
       return res.status(502).json({ error: 'OpenAI 응답을 JSON으로 파싱하지 못했습니다.' });
     }
 
