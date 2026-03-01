@@ -3660,6 +3660,10 @@ body {
     gap: 10px;
 }
 
+.analysis-ai-grid + .analysis-ai-summary {
+    margin-top: 14px;
+}
+
 .analysis-ai-list {
     padding: 12px;
     border-radius: 10px;

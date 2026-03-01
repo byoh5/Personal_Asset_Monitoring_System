@@ -7,12 +7,33 @@ const MAX_ASSET_ROWS = 8;
 const DEFAULT_CORS_ORIGIN = 'https://byoh5.github.io';
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const DEFAULT_RATE_LIMIT_MAX_REQUESTS = 8;
-const DEFAULT_MAX_OUTPUT_TOKENS = 360;
-const DEFAULT_RETRY_MAX_OUTPUT_TOKENS = 720;
+const DEFAULT_MAX_OUTPUT_TOKENS = 480;
+const DEFAULT_RETRY_MAX_OUTPUT_TOKENS = 960;
 const DEFAULT_PROMPT_CACHE_KEY = 'asset-report-v2';
 const DEFAULT_RESPONSE_CACHE_TTL_MS = 5 * 60 * 1000;
 const PROMPT_CACHE_RETENTION_VALUES = new Set(['in_memory', '24h']);
 const ALLOCATION_KEYS = ['liquidity', 'equity', 'real_estate', 'gold'];
+const REAL_ESTATE_KEYWORDS = [
+  '부동산',
+  '아파트',
+  '주택',
+  '집',
+  '오피스텔',
+  '상가',
+  '토지',
+  'real estate',
+  'property',
+];
+const SELL_KEYWORDS = [
+  '매도',
+  '매각',
+  '처분',
+  '판매',
+  '청산',
+  'sell',
+  'liquidate',
+];
+const SAFE_REAL_ESTATE_ACTION_TEXT = '부동산은 유동성이 낮아 매도보다 신규 매수 보류와 다른 자산 비중 조정으로 대응하세요.';
 const REPORT_SCHEMA_NAME = 'asset_report';
 const SHORT_ITEM_SCHEMA = {
   type: 'string',
@@ -544,6 +565,31 @@ function writeResponseCache(cacheKey, value, ttlMs, now) {
   cleanupResponseCache(now);
 }
 
+function hasKeyword(text, keywords) {
+  return keywords.some((keyword) => text.includes(keyword));
+}
+
+function isRealEstateSellAction(text) {
+  const normalized = toString(text, '').toLowerCase();
+  if (!normalized) return false;
+  return hasKeyword(normalized, REAL_ESTATE_KEYWORDS) && hasKeyword(normalized, SELL_KEYWORDS);
+}
+
+function sanitizeActionItems(items) {
+  const rows = toArray(items)
+    .map((item) => toString(item))
+    .filter((item) => item)
+    .map((item) => (isRealEstateSellAction(item) ? SAFE_REAL_ESTATE_ACTION_TEXT : item));
+
+  const unique = [];
+  rows.forEach((item) => {
+    if (!unique.includes(item)) {
+      unique.push(item);
+    }
+  });
+  return unique.slice(0, 4);
+}
+
 function normalizeReportShape(raw) {
   const parsed = raw && typeof raw === 'object' ? raw : {};
   const sanitizeItems = (items) =>
@@ -556,8 +602,8 @@ function normalizeReportShape(raw) {
     summary: toString(parsed.summary, '요약을 생성하지 못했습니다.'),
     strengths: sanitizeItems(parsed.strengths),
     risks: sanitizeItems(parsed.risks),
-    actions_30d: sanitizeItems(parsed.actions_30d),
-    actions_90d: sanitizeItems(parsed.actions_90d),
+    actions_30d: sanitizeActionItems(parsed.actions_30d),
+    actions_90d: sanitizeActionItems(parsed.actions_90d),
     allocation_commentary: toString(parsed.allocation_commentary, ''),
   };
 }
@@ -568,6 +614,9 @@ function buildSystemPrompt() {
     'Write in Korean and return JSON only.',
     'Follow the provided schema exactly. Do not add extra keys.',
     'Keep every item short, practical, and based on numeric input values.',
+    'Treat real estate as illiquid in most household contexts.',
+    'Do not suggest selling or partially selling real estate as a default action.',
+    'Prefer actions like pausing new real-estate purchases, improving cash flow, and rebalancing liquid assets.',
     'Do not provide legal or tax advice.',
   ].join('\n');
 }
