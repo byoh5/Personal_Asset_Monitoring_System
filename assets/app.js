@@ -186,6 +186,8 @@
       analysisAiStatus: '',
       analysisAiStatusType: 'info',
       analysisAiLoading: false,
+      analysisAiLastPayloadKey: '',
+      analysisAiLastResult: null,
     },
 
     menuItems: [
@@ -1321,6 +1323,8 @@
 
     invalidateAnalysisAiReport(message) {
       this.state.analysisAiReport = null;
+      this.state.analysisAiLastPayloadKey = '';
+      this.state.analysisAiLastResult = null;
       const wrapper = document.getElementById('analysisAiReport');
       if (wrapper) wrapper.style.display = 'none';
       if (message) {
@@ -1345,6 +1349,26 @@
       this.saveAnalysisProfile(answers);
       this.state.analysisReport = this.generateAnalysisReport(answers);
       this.renderAnalysisReport(this.state.analysisReport);
+      const payload = this.buildAnalysisAiPayload(answers, this.state.analysisReport);
+      const payloadKey = this.hashObject({
+        endpoint,
+        payload,
+      });
+
+      if (
+        payloadKey &&
+        payloadKey === this.state.analysisAiLastPayloadKey &&
+        this.state.analysisAiLastResult &&
+        this.state.analysisAiLastResult.report
+      ) {
+        this.state.analysisAiReport = this.state.analysisAiLastResult;
+        this.setAnalysisAiStatus('동일 입력으로 최근 리포트를 재사용했습니다.', 'success');
+        if (this.currentPage === 'analysis') {
+          const currentContent = document.getElementById('page-content');
+          if (currentContent) this.renderAnalysisPage(currentContent);
+        }
+        return;
+      }
 
       this.state.analysisAiReport = null;
       this.state.analysisAiLoading = true;
@@ -1353,7 +1377,6 @@
       if (pageContent) this.renderAnalysisPage(pageContent);
 
       try {
-        const payload = this.buildAnalysisAiPayload(answers, this.state.analysisReport);
         const response = await fetch(endpoint, {
           method: 'POST',
           headers: {
@@ -1372,6 +1395,8 @@
         }
 
         this.state.analysisAiReport = result;
+        this.state.analysisAiLastPayloadKey = payloadKey;
+        this.state.analysisAiLastResult = result;
         this.setAnalysisAiStatus('OpenAI 리포트 생성 완료', 'success');
       } catch (error) {
         console.error('OpenAI analysis report error:', error);
@@ -1388,52 +1413,60 @@
     buildAnalysisAiPayload(answers, report) {
       const metrics = report?.metrics || {};
       const allocation = report?.allocation || {};
-      const recommendations = Array.isArray(report?.recommendations) ? report.recommendations.slice(0, 8) : [];
-      const topAssets = this.getTopAssetsForAi(10);
+      const topAssets = this.getTopAssetsForAi(8);
+
+      const profile = {
+        age_range: answers.age_range,
+        household_size: answers.household_size,
+        dependents: answers.dependents,
+        income_type: answers.income_type,
+        risk_preference: answers.risk_preference,
+        housing_status: answers.housing_status,
+        retirement_age: answers.retirement_age,
+        goals: Array.isArray(answers.goals) ? answers.goals : [],
+      };
+      if (Number(answers.monthly_income || 0) > 0) {
+        profile.monthly_income = Math.round(Number(answers.monthly_income || 0));
+      }
+      if (Number(answers.monthly_expense || 0) > 0) {
+        profile.monthly_expense = Math.round(Number(answers.monthly_expense || 0));
+      }
 
       return {
-        generated_at: new Date().toISOString(),
         locale: 'ko-KR',
-        profile: {
-          age_range: answers.age_range,
-          household_size: answers.household_size,
-          dependents: answers.dependents,
-          income_type: answers.income_type,
-          monthly_income: answers.monthly_income,
-          monthly_expense: answers.monthly_expense,
-          risk_preference: answers.risk_preference,
-          housing_status: answers.housing_status,
-          retirement_age: answers.retirement_age,
-          goals: Array.isArray(answers.goals) ? answers.goals : [],
-        },
+        profile,
         snapshot: {
-          total_assets: metrics.total_assets || 0,
-          total_liabilities: metrics.total_liabilities || 0,
-          net_worth: metrics.net_worth || 0,
-          emergency_months: metrics.emergency_months || 0,
-          emergency_target_months: metrics.emergency_target_months || 0,
-          debt_ratio: metrics.debt_ratio || 0,
-          savings_rate: metrics.savings_rate || 0,
-          monthly_surplus: metrics.monthly_surplus || 0,
+          total_assets: Math.round(Number(metrics.total_assets || 0)),
+          total_liabilities: Math.round(Number(metrics.total_liabilities || 0)),
+          net_worth: Math.round(Number(metrics.net_worth || 0)),
+          emergency_months: Number((Number(metrics.emergency_months || 0)).toFixed(1)),
+          emergency_target_months: Number((Number(metrics.emergency_target_months || 0)).toFixed(1)),
+          debt_ratio: Number((Number(metrics.debt_ratio || 0)).toFixed(1)),
+          savings_rate: Number((Number(metrics.savings_rate || 0)).toFixed(1)),
+          monthly_surplus: Math.round(Number(metrics.monthly_surplus || 0)),
           allocation_current: allocation.current || {},
           allocation_target: allocation.target || {},
-          local_summary: report?.summary || '',
-          local_recommendations: recommendations,
         },
         assets: topAssets,
       };
     },
 
-    getTopAssetsForAi(limit = 10) {
+    getTopAssetsForAi(limit = 8) {
       const top = (Array.isArray(this.state.assets) ? this.state.assets : [])
-        .map((asset) => ({
-          name: asset?.name || '-',
-          type: this.normalizeAssetType(asset?.type || 'other'),
-          valuation: Number(asset?.valuation || 0),
-          currency: asset?.currency || 'KRW',
-          ticker: asset?.ticker || null,
-          market: asset?.market || null,
-        }))
+        .map((asset) => {
+          const row = {
+            name: asset?.name || '-',
+            type: this.normalizeAssetType(asset?.type || 'other'),
+            valuation: Math.round(Number(asset?.valuation || 0)),
+          };
+          const currency = this.toStringValue(asset?.currency);
+          if (currency && currency !== 'KRW') row.currency = currency;
+          const ticker = this.toStringValue(asset?.ticker);
+          if (ticker) row.ticker = ticker;
+          const market = this.toStringValue(asset?.market);
+          if (market) row.market = market;
+          return row;
+        })
         .filter((asset) => Number.isFinite(asset.valuation) && asset.valuation !== 0)
         .sort((a, b) => Math.abs(b.valuation) - Math.abs(a.valuation))
         .slice(0, limit);
@@ -1790,12 +1823,23 @@
       const risks = this.ensureStringArray(report.risks);
       const actions30d = this.ensureStringArray(report.actions_30d);
       const actions90d = this.ensureStringArray(report.actions_90d);
+      const usage = result && typeof result.usage === 'object' ? result.usage : {};
+      const inputTokens = Math.max(0, Math.round(Number(usage.input_tokens || 0)));
+      const cachedInputTokens = Math.max(0, Math.round(Number(usage.cached_input_tokens || 0)));
+      const outputTokens = Math.max(0, Math.round(Number(usage.output_tokens || 0)));
+      const cacheRate = inputTokens > 0 ? ((cachedInputTokens / inputTokens) * 100).toFixed(1) : null;
+      const tokenText = inputTokens > 0
+        ? `입력 ${inputTokens.toLocaleString('ko-KR')} / 출력 ${outputTokens.toLocaleString('ko-KR')} / 캐시 ${cachedInputTokens.toLocaleString('ko-KR')}${cacheRate !== null ? ` (${cacheRate}%)` : ''}`
+        : '';
+      const serverResponseCacheHit = !!(result && result.cache && result.cache.server_response_cache_hit);
 
       wrapper.style.display = 'block';
       content.innerHTML = `
         <div class="analysis-ai-meta">
           <span>모델: <strong>${this.escapeHtml(model)}</strong></span>
           <span>생성시각: <strong>${this.escapeHtml(generatedAt)}</strong></span>
+          ${tokenText ? `<span>토큰: <strong>${this.escapeHtml(tokenText)}</strong></span>` : ''}
+          <span>서버 캐시: <strong>${serverResponseCacheHit ? 'HIT' : 'MISS'}</strong></span>
         </div>
 
         <div class="analysis-ai-summary">
@@ -3424,6 +3468,24 @@
       if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
       if (raw.startsWith('/')) return raw;
       return `/${raw}`;
+    },
+
+    hashText(value) {
+      const text = value === null || value === undefined ? '' : String(value);
+      let hash = 2166136261;
+      for (let i = 0; i < text.length; i += 1) {
+        hash ^= text.charCodeAt(i);
+        hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+      }
+      return (hash >>> 0).toString(16);
+    },
+
+    hashObject(value) {
+      try {
+        return this.hashText(JSON.stringify(value));
+      } catch (_error) {
+        return '';
+      }
     },
 
     ensureStringArray(value) {

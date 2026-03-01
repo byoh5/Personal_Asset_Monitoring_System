@@ -42,6 +42,10 @@
 2. 환경변수 설정
    - `OPENAI_API_KEY`: OpenAI API 키
    - `OPENAI_MODEL` (선택): 기본 `gpt-4.1-mini`
+   - `OPENAI_MAX_OUTPUT_TOKENS` (선택): 기본 `360` (응답 길이/비용 상한)
+   - `OPENAI_PROMPT_CACHE_KEY` (선택): 기본 `asset-report-v2` (Prompt Caching 히트율 안정화)
+   - `OPENAI_PROMPT_CACHE_RETENTION` (선택): `in_memory` 또는 `24h` (모델 지원 시)
+   - `OPENAI_RESPONSE_CACHE_TTL_MS` (선택): 기본 `300000` (동일 입력 서버 응답 재사용)
    - `CORS_ORIGIN` (선택): 특정 도메인 제한 시 설정
 3. 배포 후 프론트의 `자산 분석 > OpenAI 확장 리포트`에서 API URL을 기본값(`/api/openai-asset-report`)으로 사용
 
