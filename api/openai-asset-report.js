@@ -2,12 +2,118 @@ const OPENAI_RESPONSES_API_URL = 'https://api.openai.com/v1/responses';
 const DEFAULT_MODEL = 'gpt-4.1-mini';
 const MAX_INPUT_BYTES = 120000;
 const MAX_ASSET_ROWS = 12;
+const DEFAULT_CORS_ORIGIN = 'https://byoh5.github.io';
+const DEFAULT_RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const DEFAULT_RATE_LIMIT_MAX_REQUESTS = 8;
+const DEFAULT_MAX_OUTPUT_TOKENS = 500;
 
-function applyCors(res) {
-  const origin = process.env.CORS_ORIGIN || '*';
-  res.setHeader('Access-Control-Allow-Origin', origin);
+const rateLimitStore = globalThis.__pamsRateLimitStore || new Map();
+globalThis.__pamsRateLimitStore = rateLimitStore;
+
+function getHeader(req, name) {
+  const headers = req && req.headers ? req.headers : {};
+  const direct = headers[name];
+  if (typeof direct === 'string') return direct;
+  const lower = headers[name.toLowerCase()];
+  if (typeof lower === 'string') return lower;
+  return '';
+}
+
+function normalizeOrigin(value) {
+  const text = toString(value, '').trim();
+  if (!text) return '';
+  try {
+    return new URL(text).origin;
+  } catch (_error) {
+    return '';
+  }
+}
+
+function parseAllowedOrigins(raw) {
+  const value = toString(raw, DEFAULT_CORS_ORIGIN);
+  if (value === '*') {
+    return { allowAll: true, origins: [] };
+  }
+  const origins = value
+    .split(',')
+    .map((item) => normalizeOrigin(item))
+    .filter((item) => item);
+  return { allowAll: false, origins };
+}
+
+function extractRequestOrigins(req) {
+  const origin = normalizeOrigin(getHeader(req, 'origin'));
+  const refererOrigin = normalizeOrigin(getHeader(req, 'referer'));
+  return Array.from(new Set([origin, refererOrigin].filter((item) => item)));
+}
+
+function isAllowedRequestOrigin(req, allowed) {
+  if (allowed.allowAll) return true;
+  if (!allowed.origins.length) return false;
+  const requestOrigins = extractRequestOrigins(req);
+  if (!requestOrigins.length) return false;
+  return requestOrigins.some((origin) => allowed.origins.includes(origin));
+}
+
+function applyCors(req, res, allowed) {
+  const origin = normalizeOrigin(getHeader(req, 'origin'));
+  if (allowed.allowAll) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  } else if (origin && allowed.origins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else if (allowed.origins[0]) {
+    res.setHeader('Access-Control-Allow-Origin', allowed.origins[0]);
+  }
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Vary', 'Origin');
+}
+
+function getClientIp(req) {
+  const forwarded = toString(getHeader(req, 'x-forwarded-for'), '');
+  if (forwarded) {
+    const first = forwarded.split(',')[0];
+    const ip = toString(first, '');
+    if (ip) return ip;
+  }
+  const realIp = toString(getHeader(req, 'x-real-ip'), '');
+  if (realIp) return realIp;
+  return 'unknown';
+}
+
+function checkRateLimit(req) {
+  const now = Date.now();
+  const windowMs = Math.max(
+    10 * 1000,
+    toNumber(process.env.RATE_LIMIT_WINDOW_MS, DEFAULT_RATE_LIMIT_WINDOW_MS)
+  );
+  const maxRequests = Math.max(
+    1,
+    toNumber(process.env.RATE_LIMIT_MAX_REQUESTS, DEFAULT_RATE_LIMIT_MAX_REQUESTS)
+  );
+  const origin = extractRequestOrigins(req)[0] || 'no-origin';
+  const ip = getClientIp(req);
+  const key = `${ip}::${origin}`;
+
+  const existing = rateLimitStore.get(key);
+  if (!existing || now >= existing.resetAt) {
+    const next = { count: 1, resetAt: now + windowMs, maxRequests };
+    rateLimitStore.set(key, next);
+    return { allowed: true, remaining: Math.max(0, maxRequests - 1), resetAt: next.resetAt, maxRequests };
+  }
+
+  if (existing.count >= maxRequests) {
+    return { allowed: false, remaining: 0, resetAt: existing.resetAt, maxRequests };
+  }
+
+  existing.count += 1;
+  rateLimitStore.set(key, existing);
+  return {
+    allowed: true,
+    remaining: Math.max(0, maxRequests - existing.count),
+    resetAt: existing.resetAt,
+    maxRequests,
+  };
 }
 
 function parseRequestBody(req) {
@@ -179,13 +285,30 @@ function buildSystemPrompt() {
 }
 
 module.exports = async function handler(req, res) {
-  applyCors(res);
+  const allowedOrigins = parseAllowedOrigins(process.env.CORS_ORIGIN);
+  applyCors(req, res, allowedOrigins);
 
   if (req.method === 'OPTIONS') {
+    if (!isAllowedRequestOrigin(req, allowedOrigins)) {
+      return res.status(403).json({ error: 'Origin not allowed.' });
+    }
     return res.status(204).end();
   }
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed. Use POST.' });
+  }
+  if (!isAllowedRequestOrigin(req, allowedOrigins)) {
+    return res.status(403).json({ error: 'Origin not allowed.' });
+  }
+
+  const rate = checkRateLimit(req);
+  res.setHeader('X-RateLimit-Limit', String(rate.maxRequests));
+  res.setHeader('X-RateLimit-Remaining', String(rate.remaining));
+  res.setHeader('X-RateLimit-Reset', String(Math.floor(rate.resetAt / 1000)));
+  if (!rate.allowed) {
+    const retryAfterSec = Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000));
+    res.setHeader('Retry-After', String(retryAfterSec));
+    return res.status(429).json({ error: '요청이 너무 많습니다. 잠시 후 다시 시도해주세요.' });
   }
 
   const apiKey = process.env.OPENAI_API_KEY;
@@ -204,6 +327,10 @@ module.exports = async function handler(req, res) {
 
   const responsePayload = {
     model,
+    max_output_tokens: Math.max(
+      200,
+      toNumber(process.env.OPENAI_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS)
+    ),
     input: [
       {
         role: 'system',
